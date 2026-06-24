@@ -23,6 +23,7 @@ export async function PublicNavbar() {
         <Link href="/hotels" className="hover:text-primary transition-colors">Hotels</Link>
         <Link href="/modules" className="hover:text-primary transition-colors">Modules</Link>
         <Link href="/how-it-works" className="hover:text-primary transition-colors">How It Works</Link>
+        <Link href="/contact" className="hover:text-primary transition-colors">Contact</Link>
       </nav>
 
       <div className="hidden md:flex items-center gap-4">

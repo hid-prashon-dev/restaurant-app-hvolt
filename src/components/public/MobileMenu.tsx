@@ -38,6 +38,7 @@ export function MobileMenu({ isAuthenticated }: { isAuthenticated: boolean }) {
             <Link href="/hotels" onClick={() => setIsOpen(false)} className="hover:text-primary transition-colors py-2">Hotels</Link>
             <Link href="/modules" onClick={() => setIsOpen(false)} className="hover:text-primary transition-colors py-2">Modules</Link>
             <Link href="/how-it-works" onClick={() => setIsOpen(false)} className="hover:text-primary transition-colors py-2">How It Works</Link>
+            <Link href="/contact" onClick={() => setIsOpen(false)} className="hover:text-primary transition-colors py-2">Contact</Link>
           </nav>
           <div className="flex flex-col gap-3 mt-2 pt-4 border-t border-border">
             {isAuthenticated ? (
