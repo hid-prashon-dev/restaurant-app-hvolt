@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
+import { AdminAssignmentForm } from './AdminAssignmentForm';
 
 export default async function TenantDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -16,6 +17,16 @@ export default async function TenantDetailPage(props: { params: Promise<{ id: st
 
   const { data: tenant } = await supabase.from('tenants').select('*').eq('id', id).single();
   if (!tenant) notFound();
+
+  // After strict auth check, we can securely use the service role to read admin profiles
+  const { createAdminClient } = await import('@/utils/supabase/admin');
+  const adminSupabase = createAdminClient();
+  const { data: existingAdmin } = await adminSupabase
+    .from('profiles')
+    .select('id, email, role')
+    .eq('tenant_id', id)
+    .eq('role', 'ADMIN')
+    .maybeSingle();
 
   // Basic update action (status only for Phase 4A)
   const updateStatus = async (formData: FormData) => {
@@ -75,14 +86,7 @@ export default async function TenantDetailPage(props: { params: Promise<{ id: st
         </form>
       </div>
       
-      <div className="bg-warning/10 border border-warning/20 rounded-xl p-6 shadow-sm space-y-2 mt-8">
-        <h3 className="font-bold text-warning flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-          Admin Assignment
-        </h3>
-        <p className="text-sm text-warning/90 font-medium">Admin assignment controls are deferred to Phase 4B.</p>
-        <p className="text-xs text-warning/80">You cannot currently assign an administrator to this tenant from the UI.</p>
-      </div>
+      <AdminAssignmentForm tenantId={id} tenantName={tenant.public_name} existingAdmin={existingAdmin} />
     </div>
   );
 }
