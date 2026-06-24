@@ -51,9 +51,14 @@ export default async function TenantDetailPage(props: { params: Promise<{ id: st
           <h1 className="text-3xl font-heading font-bold text-foreground">{tenant.public_name}</h1>
           <p className="text-muted-foreground mt-1">/{tenant.slug}</p>
         </div>
-        <span className={`px-3 py-1 rounded-full text-sm font-medium border ${tenant.status === 'ACTIVE' ? 'bg-success/10 text-success border-success/20' : 'bg-warning/10 text-warning border-warning/20'}`}>
-          {tenant.status}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className={`px-3 py-1 rounded-full text-sm font-medium border ${tenant.status === 'ACTIVE' ? 'bg-success/10 text-success border-success/20' : 'bg-warning/10 text-warning border-warning/20'}`}>
+            {tenant.status}
+          </span>
+          <Link href={`/dashboard/master/tenants/${id}/team`}>
+            <Button variant="outline" size="sm">View Team</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">

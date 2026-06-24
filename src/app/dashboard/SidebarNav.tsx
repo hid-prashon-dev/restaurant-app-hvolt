@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, UtensilsCrossed, Hotel, Settings, Building2 } from "lucide-react";
+import { LayoutDashboard, UtensilsCrossed, Hotel, Settings, Building2, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function SidebarNav({ role }: { role: string | null | undefined }) {
@@ -12,6 +12,7 @@ export function SidebarNav({ role }: { role: string | null | undefined }) {
   const isMasterTenantsActive = pathname.startsWith('/dashboard/master/tenants');
   const isSuperTenantsActive = pathname.startsWith('/dashboard/superadmin/tenants');
   const isAdminBusinessActive = pathname.startsWith('/dashboard/admin/business');
+  const isAdminTeamActive = pathname.startsWith('/dashboard/admin/team');
 
   return (
     <>
@@ -77,18 +78,32 @@ export function SidebarNav({ role }: { role: string | null | undefined }) {
         )}
 
         {role === 'ADMIN' && (
-          <Link
-            href="/dashboard/admin/business"
-            className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              isAdminBusinessActive
-                ? "text-primary bg-primary/10 hover:text-primary"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted"
-            )}
-          >
-            <Building2 className="h-4 w-4" />
-            My Business
-          </Link>
+          <>
+            <Link
+              href="/dashboard/admin/business"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isAdminBusinessActive
+                  ? "text-primary bg-primary/10 hover:text-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              <Building2 className="h-4 w-4" />
+              My Business
+            </Link>
+            <Link
+              href="/dashboard/admin/team"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isAdminTeamActive
+                  ? "text-primary bg-primary/10 hover:text-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              <Users className="h-4 w-4" />
+              Team
+            </Link>
+          </>
         )}
       </nav>
       

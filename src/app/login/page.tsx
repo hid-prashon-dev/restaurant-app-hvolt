@@ -3,15 +3,20 @@ import { Button } from '@/components/ui/button'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string, next?: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
+  const params = await searchParams;
+  const nextPath = params?.next;
+
   if (user) {
+    if (nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//')) {
+      redirect(nextPath);
+    }
     redirect('/dashboard')
   }
 
-  const params = await searchParams;
   const error = params?.error;
 
   return (
@@ -25,6 +30,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <p className="mt-2 text-muted-foreground">Sign in to your Himavolt dashboard.</p>
         </div>
         <form className="space-y-6" action={login}>
+          {nextPath && <input type="hidden" name="next" value={nextPath} />}
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground" htmlFor="email">
               Email
