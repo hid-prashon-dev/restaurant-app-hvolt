@@ -27,6 +27,35 @@ export async function createInvite(prevState: any, formData: FormData) {
       throw new Error('Invalid role selected.');
     }
 
+    const { createAdminClient } = await import('@/utils/supabase/admin');
+    const adminSupabase = createAdminClient();
+
+    const { data: targetProfile } = await adminSupabase
+      .from('profiles')
+      .select('role, tenant_id')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (!targetProfile) {
+      throw new Error('No existing guest account was found for this email. New-user invite signup is deferred to Phase 5B.');
+    }
+
+    if (targetProfile.tenant_id === profile.tenant_id) {
+      throw new Error('This user is already on your team. Use Team Management to change their role.');
+    }
+
+    if (targetProfile.tenant_id !== null) {
+      throw new Error('This user already belongs to another business and cannot be invited in the current single-tenant MVP.');
+    }
+
+    if (['MASTER_ADMIN', 'SUPER_ADMIN', 'ADMIN'].includes(targetProfile.role)) {
+      throw new Error('This account cannot be invited as staff.');
+    }
+
+    if (targetProfile.role !== 'GUEST') {
+      throw new Error('This user already has a staff role. Use Team Management to change their role.');
+    }
+
     const { data: existing } = await supabase
       .from('tenant_invitations')
       .select('id')
@@ -173,4 +202,118 @@ export async function getTenantTeam(tenantId: string) {
     .order('created_at', { ascending: true });
 
   return team || [];
+}
+
+export async function updateTeamMemberRole(formData: FormData) {
+  const targetId = formData.get('id') as string;
+  const newRole = formData.get('role') as string;
+  if (!targetId || !newRole) throw new Error('Missing target or role.');
+
+  const allowedRoles = ['MANAGER', 'CASHIER', 'WAITER', 'KITCHEN_STAFF', 'FRONT_DESK', 'HOUSEKEEPING', 'INVENTORY_MANAGER'];
+  if (!allowedRoles.includes(newRole)) throw new Error('Invalid role.');
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Unauthorized');
+
+  const { data: profile } = await supabase.from('profiles').select('role, tenant_id').eq('id', user.id).single();
+  if (profile?.role !== 'ADMIN' || !profile.tenant_id) {
+    throw new Error('Forbidden: Only Tenant Admins can manage roles.');
+  }
+
+  if (targetId === user.id) {
+    throw new Error('You cannot change your own role.');
+  }
+
+  const { createAdminClient } = await import('@/utils/supabase/admin');
+  const adminSupabase = createAdminClient();
+
+  const { data: targetProfile } = await adminSupabase
+    .from('profiles')
+    .select('role, tenant_id')
+    .eq('id', targetId)
+    .single();
+
+  if (!targetProfile) throw new Error('User not found.');
+  if (targetProfile.tenant_id !== profile.tenant_id) throw new Error('Cross-tenant operations are blocked.');
+  if (targetProfile.role === 'MASTER_ADMIN' || targetProfile.role === 'SUPER_ADMIN' || targetProfile.role === 'ADMIN' || targetProfile.role === 'GUEST') {
+    throw new Error('You cannot change this user\'s role.');
+  }
+  if (targetProfile.role === newRole) {
+    throw new Error('Role is already set to this value.');
+  }
+
+  const { error } = await adminSupabase
+    .from('profiles')
+    .update({ role: newRole })
+    .eq('id', targetId)
+    .eq('tenant_id', profile.tenant_id);
+
+  if (error) throw new Error('Failed to update role.');
+
+  await adminSupabase.from('tenant_audit_logs').insert({
+    tenant_id: profile.tenant_id,
+    actor_profile_id: user.id,
+    target_profile_id: targetId,
+    action: 'STAFF_ROLE_CHANGED',
+    metadata: { old_role: targetProfile.role, new_role: newRole }
+  });
+
+  revalidatePath('/dashboard/admin/team');
+  return { success: true, error: null };
+}
+
+export async function removeTeamMember(formData: FormData) {
+  const targetId = formData.get('id') as string;
+  if (!targetId) throw new Error('Missing target.');
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Unauthorized');
+
+  const { data: profile } = await supabase.from('profiles').select('role, tenant_id').eq('id', user.id).single();
+  if (profile?.role !== 'ADMIN' || !profile.tenant_id) {
+    throw new Error('Forbidden: Only Tenant Admins can manage roles.');
+  }
+
+  if (targetId === user.id) {
+    throw new Error('You cannot remove yourself.');
+  }
+
+  const { createAdminClient } = await import('@/utils/supabase/admin');
+  const adminSupabase = createAdminClient();
+
+  const { data: targetProfile } = await adminSupabase
+    .from('profiles')
+    .select('role, tenant_id')
+    .eq('id', targetId)
+    .single();
+
+  if (!targetProfile) throw new Error('User not found.');
+  if (targetProfile.tenant_id !== profile.tenant_id) throw new Error('Cross-tenant operations are blocked.');
+  if (targetProfile.role === 'MASTER_ADMIN' || targetProfile.role === 'SUPER_ADMIN' || targetProfile.role === 'ADMIN') {
+    throw new Error('You cannot remove platform accounts or Admins.');
+  }
+  if (targetProfile.tenant_id === null || targetProfile.role === 'GUEST') {
+    throw new Error('User is already unassigned.');
+  }
+
+  const { error } = await adminSupabase
+    .from('profiles')
+    .update({ role: 'GUEST', tenant_id: null })
+    .eq('id', targetId)
+    .eq('tenant_id', profile.tenant_id);
+
+  if (error) throw new Error('Failed to remove user.');
+
+  await adminSupabase.from('tenant_audit_logs').insert({
+    tenant_id: profile.tenant_id,
+    actor_profile_id: user.id,
+    target_profile_id: targetId,
+    action: 'STAFF_REMOVED',
+    metadata: { previous_role: targetProfile.role, previous_tenant_id: profile.tenant_id }
+  });
+
+  revalidatePath('/dashboard/admin/team');
+  return { success: true, error: null };
 }

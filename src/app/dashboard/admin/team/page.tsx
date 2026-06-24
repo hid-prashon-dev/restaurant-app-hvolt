@@ -4,6 +4,8 @@ import { getTenantTeam } from '@/app/actions/team';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { RevokeInviteButton } from './RevokeInviteButton';
+import { RoleActionMenu } from './RoleActionMenu';
+import { formatRoleLabel } from '@/utils/roles';
 
 export default async function AdminTeamPage() {
   const supabase = await createClient();
@@ -21,12 +23,31 @@ export default async function AdminTeamPage() {
     .eq('tenant_id', profile.tenant_id)
     .order('created_at', { ascending: false });
 
+  const { createAdminClient } = await import('@/utils/supabase/admin');
+  const adminSupabase = createAdminClient();
+
+  const pendingEmails = invites?.filter(i => !i.accepted_at && !i.revoked_at && new Date(i.expires_at) >= new Date()).map(i => i.email) || [];
+  let eligibleEmails = new Set<string>();
+  
+  if (pendingEmails.length > 0) {
+    const { data: profiles } = await adminSupabase
+      .from('profiles')
+      .select('email, role, tenant_id')
+      .in('email', pendingEmails);
+    
+    profiles?.forEach(p => {
+      if (p.tenant_id === null && p.role === 'GUEST') {
+        eligibleEmails.add(p.email.toLowerCase());
+      }
+    });
+  }
+
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-heading font-bold text-foreground">Team Management</h1>
-          <p className="text-muted-foreground mt-1">Manage your staff and pending invitations.</p>
+          <p className="text-muted-foreground mt-1">Manage your staff and pending invitations. Invites are for onboarding new unassigned guest accounts.</p>
         </div>
         <Link href="/dashboard/admin/team/invite">
           <Button className="bg-primary hover:bg-primary/90 text-primary-foreground">
@@ -49,19 +70,28 @@ export default async function AdminTeamPage() {
                   <th className="px-6 py-3 font-medium">Email</th>
                   <th className="px-6 py-3 font-medium">Role</th>
                   <th className="px-6 py-3 font-medium">Joined</th>
+                  <th className="px-6 py-3 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {team.map((member: any) => (
                   <tr key={member.id} className="hover:bg-muted/50 transition-colors">
-                    <td className="px-6 py-4 font-medium text-foreground">{member.email}</td>
+                    <td className="px-6 py-4 font-medium text-foreground">{member.email} {user.id === member.id && <span className="text-xs ml-2 text-muted-foreground">(You)</span>}</td>
                     <td className="px-6 py-4">
                       <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-1 rounded-full text-xs font-medium">
-                        {member.role}
+                        {formatRoleLabel(member.role)}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-muted-foreground">
                       {new Date(member.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <RoleActionMenu 
+                        memberId={member.id} 
+                        currentRole={member.role} 
+                        email={member.email} 
+                        isSelf={user.id === member.id}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -94,6 +124,7 @@ export default async function AdminTeamPage() {
                   const isAccepted = !!invite.accepted_at;
                   const isRevoked = !!invite.revoked_at;
                   const isPending = !isAccepted && !isRevoked && !isExpired;
+                  const isIneligible = isPending && !eligibleEmails.has(invite.email.toLowerCase());
 
                   let statusText = 'Pending';
                   let statusClass = 'bg-warning/10 text-warning border-warning/20';
@@ -107,6 +138,9 @@ export default async function AdminTeamPage() {
                   } else if (isExpired) {
                     statusText = 'Expired';
                     statusClass = 'bg-muted text-muted-foreground border-border';
+                  } else if (isIneligible) {
+                    statusText = 'No longer eligible';
+                    statusClass = 'bg-muted text-muted-foreground border-border';
                   }
 
                   return (
@@ -114,7 +148,7 @@ export default async function AdminTeamPage() {
                       <td className="px-6 py-4 text-foreground">{invite.email}</td>
                       <td className="px-6 py-4">
                         <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-1 rounded-full text-xs font-medium">
-                          {invite.role}
+                          {formatRoleLabel(invite.role)}
                         </span>
                       </td>
                       <td className="px-6 py-4">
