@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
 import { updateTeamMemberRole, removeTeamMember } from '@/app/actions/team';
+import { formatRoleLabel } from '@/utils/roles';
 
 export function RoleActionMenu({ memberId, currentRole, email, isSelf }: { memberId: string, currentRole: string, email: string, isSelf: boolean }) {
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
@@ -74,10 +75,11 @@ export function RoleActionMenu({ memberId, currentRole, email, isSelf }: { membe
                 className="w-full flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
               >
                 {allowedRoles.map(r => (
-                  <option key={r} value={r}>{r}</option>
+                  <option key={r} value={r}>{formatRoleLabel(r)}</option>
                 ))}
               </select>
-              <div className="flex gap-3 justify-end">
+              <p className="text-xs text-muted-foreground mt-2">Role changes affect what dashboard areas this staff member can access.</p>
+              <div className="flex gap-3 justify-end mt-4">
                 <Button type="button" variant="outline" onClick={() => setIsRoleModalOpen(false)} disabled={isPending}>Cancel</Button>
                 <Button type="submit" disabled={isPending || selectedRole === currentRole}>
                   {isPending ? 'Saving...' : 'Save Changes'}

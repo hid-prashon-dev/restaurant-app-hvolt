@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import { acceptInvite } from '@/app/actions/team';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
+import { formatRoleLabel } from '@/utils/roles';
 
 export function JoinForm({ token, email, role }: { token: string, email: string, role?: string }) {
   const [state, formAction, isPending] = useActionState(
@@ -29,7 +30,7 @@ export function JoinForm({ token, email, role }: { token: string, email: string,
           </div>
           <h1 className="text-2xl font-bold font-heading text-foreground">Invitation Accepted!</h1>
           <p className="text-sm text-muted-foreground">
-            You have successfully joined the team as <strong className="text-primary">{role || 'Staff'}</strong>.
+            You have successfully joined the team as <strong className="text-primary">{role ? formatRoleLabel(role) : 'Staff'}</strong>.
           </p>
           <Link href="/dashboard">
             <Button className="w-full">Go to Dashboard</Button>
@@ -48,7 +49,7 @@ export function JoinForm({ token, email, role }: { token: string, email: string,
         </p>
         {role && (
           <div className="p-4 bg-muted border border-border rounded-lg text-sm text-foreground font-medium">
-            You are invited to join as: <span className="text-primary ml-1">{role}</span>
+            You are invited to join as: <span className="text-primary ml-1">{formatRoleLabel(role)}</span>
           </div>
         )}
         
