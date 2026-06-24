@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { LayoutDashboard, UtensilsCrossed, Hotel, Settings, UserCircle, Bell, LogOut } from "lucide-react";
+import { UserCircle, Bell, LogOut } from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import { logout } from "@/app/login/actions";
+import { SidebarNav } from "./SidebarNav";
 
 export default async function DashboardLayout({
   children,
@@ -11,6 +12,12 @@ export default async function DashboardLayout({
 }) {
   const supabase = await createClient();
   const { data: { user }, error } = await supabase.auth.getUser();
+
+  let role = null;
+  if (user) {
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    role = profile?.role;
+  }
 
   if (error || !user) {
     redirect('/login');
@@ -30,42 +37,7 @@ export default async function DashboardLayout({
         </div>
         
         <div className="flex flex-1 flex-col overflow-y-auto py-4">
-          <nav className="grid items-start px-4 text-sm font-medium gap-1">
-            <div className="px-2 py-2 text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-              Operations
-            </div>
-            <Link
-              href="/dashboard"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-primary bg-primary/10 transition-all hover:text-primary"
-            >
-              <LayoutDashboard className="h-4 w-4" />
-              Overview
-            </Link>
-            <Link
-              href="/coming-soon"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-muted-foreground transition-all hover:text-foreground hover:bg-muted"
-            >
-              <UtensilsCrossed className="h-4 w-4" />
-              Restaurant
-            </Link>
-            <Link
-              href="/coming-soon"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-muted-foreground transition-all hover:text-foreground hover:bg-muted"
-            >
-              <Hotel className="h-4 w-4" />
-              Hotel
-            </Link>
-          </nav>
-          
-          <nav className="mt-auto grid items-start px-4 text-sm font-medium gap-1">
-            <Link
-              href="/coming-soon"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-muted-foreground transition-all hover:text-foreground hover:bg-muted"
-            >
-              <Settings className="h-4 w-4" />
-              Settings
-            </Link>
-          </nav>
+          <SidebarNav role={role} />
         </div>
       </aside>
 
