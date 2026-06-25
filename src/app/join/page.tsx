@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { JoinForm } from './JoinForm';
+import { InviteSignupForm } from './InviteSignupForm';
 import { createHash } from 'crypto';
 
 export default async function JoinPage(props: { searchParams: Promise<{ token?: string }> }) {
@@ -97,22 +98,35 @@ export default async function JoinPage(props: { searchParams: Promise<{ token?: 
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <div className="bg-card p-8 rounded-xl shadow-sm border border-border text-center max-w-md w-full space-y-6">
-          <h1 className="text-2xl font-bold font-heading text-foreground">Log In Required</h1>
-          <p className="text-muted-foreground text-sm">
-            This invite is currently for <strong>existing users only</strong>. Log in with the email address that received this invite.
-          </p>
-          <div className="bg-primary/10 border border-primary/20 p-3 rounded-md text-sm text-primary font-medium">
-            New-user invite signup is deferred to Phase 5B.
+    const { data: existingProfile } = await adminSupabase
+      .from('profiles')
+      .select('id')
+      .eq('email', invite.email)
+      .maybeSingle();
+
+    if (existingProfile) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background p-4">
+          <div className="bg-card p-8 rounded-xl shadow-sm border border-border text-center max-w-md w-full space-y-6">
+            <h1 className="text-2xl font-bold font-heading text-foreground">Log In Required</h1>
+            <p className="text-muted-foreground text-sm">
+              An account already exists for <strong>{invite.email}</strong>. Please log in to accept this invite.
+            </p>
+            <Link href={`/login?next=${encodeURIComponent(`/join?token=${token}`)}`}>
+              <Button className="w-full">Log In to Accept</Button>
+            </Link>
           </div>
-          <Link href={`/login?next=${encodeURIComponent(`/join?token=${token}`)}`}>
-            <Button className="w-full">Log In to Accept</Button>
-          </Link>
         </div>
-      </div>
-    );
+      );
+    }
+
+    const { data: tenantData } = await adminSupabase
+      .from('tenants')
+      .select('public_name')
+      .eq('id', invite.tenant_id)
+      .single();
+
+    return <InviteSignupForm token={token} email={invite.email} role={invite.role} tenantName={tenantData?.public_name} />;
   }
 
   if (user.email?.toLowerCase() !== invite.email.toLowerCase()) {

@@ -43,6 +43,12 @@ export function InviteForm() {
         <div className="bg-warning/10 border border-warning/20 p-4 rounded-md text-sm text-warning-foreground text-left">
           <strong>Important:</strong> We do not send emails automatically yet. You must manually share this link. This is the only time the link will be shown.
         </div>
+        
+        {state.isNewUser && (
+          <div className="bg-primary/10 border border-primary/20 p-4 rounded-md text-sm text-primary text-left font-medium">
+            Note: This email does not have a Himavolt account yet. This invite link will securely allow them to create a new password and join your team.
+          </div>
+        )}
 
         <div className="flex items-center gap-2">
           <input 
@@ -73,7 +79,7 @@ export function InviteForm() {
           Generate an invite link for an existing user to join your business workspace.
         </p>
         <div className="bg-primary/10 border border-primary/20 p-3 rounded-md mt-4 text-xs text-primary font-medium">
-          Note: Phase 5A only supports inviting users who already have an account. The user must be a Guest to accept.
+          Note: You can invite both existing users and new users. New users will be prompted to set a password to create their account.
         </div>
       </div>
 

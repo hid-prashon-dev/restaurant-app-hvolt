@@ -19,12 +19,12 @@ export async function createInvite(prevState: any, formData: FormData) {
     const emailRaw = formData.get('email') as string;
     const role = formData.get('role') as string;
 
-    if (!emailRaw || !role) throw new Error('Missing required fields.');
+    if (!emailRaw || !role) return { token: null, success: false, error: 'Missing required fields.' };
     const email = emailRaw.toLowerCase().trim();
 
     const allowedRoles = ['MANAGER', 'CASHIER', 'WAITER', 'KITCHEN_STAFF', 'FRONT_DESK', 'HOUSEKEEPING', 'INVENTORY_MANAGER'];
     if (!allowedRoles.includes(role)) {
-      throw new Error('Invalid role selected.');
+      return { token: null, success: false, error: 'Invalid role selected.' };
     }
 
     const { createAdminClient } = await import('@/utils/supabase/admin');
@@ -36,27 +36,25 @@ export async function createInvite(prevState: any, formData: FormData) {
       .eq('email', email)
       .maybeSingle();
 
-    if (!targetProfile) {
-      throw new Error('No existing guest account was found for this email. New-user invite signup is deferred to Phase 5B.');
+    if (targetProfile) {
+      if (targetProfile.tenant_id === profile.tenant_id) {
+        return { token: null, success: false, error: 'This user is already on your team. Use Team Management to change their role.' };
+      }
+
+      if (targetProfile.tenant_id !== null) {
+        return { token: null, success: false, error: 'This user already belongs to another business and cannot be invited in the current single-tenant MVP.' };
+      }
+
+      if (['MASTER_ADMIN', 'SUPER_ADMIN', 'ADMIN'].includes(targetProfile.role)) {
+        return { token: null, success: false, error: 'This account cannot be invited as staff.' };
+      }
+
+      if (targetProfile.role !== 'GUEST') {
+        return { token: null, success: false, error: 'This user already has a staff role. Use Team Management to change their role.' };
+      }
     }
 
-    if (targetProfile.tenant_id === profile.tenant_id) {
-      throw new Error('This user is already on your team. Use Team Management to change their role.');
-    }
-
-    if (targetProfile.tenant_id !== null) {
-      throw new Error('This user already belongs to another business and cannot be invited in the current single-tenant MVP.');
-    }
-
-    if (['MASTER_ADMIN', 'SUPER_ADMIN', 'ADMIN'].includes(targetProfile.role)) {
-      throw new Error('This account cannot be invited as staff.');
-    }
-
-    if (targetProfile.role !== 'GUEST') {
-      throw new Error('This user already has a staff role. Use Team Management to change their role.');
-    }
-
-    const { data: existing } = await supabase
+    const { data: existing } = await adminSupabase
       .from('tenant_invitations')
       .select('id')
       .eq('email', email)
@@ -67,13 +65,13 @@ export async function createInvite(prevState: any, formData: FormData) {
       .maybeSingle();
 
     if (existing) {
-      throw new Error('An active pending invitation already exists for this email.');
+      return { token: null, success: false, error: 'An active pending invitation already exists for this email.' };
     }
 
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
 
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('tenant_invitations')
       .insert({
         tenant_id: profile.tenant_id,
@@ -85,13 +83,14 @@ export async function createInvite(prevState: any, formData: FormData) {
 
     if (error) {
       console.error(error);
-      throw new Error('Failed to create invitation.');
+      return { token: null, success: false, error: 'Failed to create invitation.' };
     }
 
     revalidatePath('/dashboard/admin/team');
-    return { token, success: true, error: null };
+    return { token, isNewUser: !targetProfile, success: true, error: null };
   } catch (error: any) {
-    return { token: null, success: false, error: error.message };
+    console.error('Unexpected error during createInvite:', error);
+    return { token: null, success: false, error: 'Something went wrong. Please try again.' };
   }
 }
 
