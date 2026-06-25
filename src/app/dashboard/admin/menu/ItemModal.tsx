@@ -6,12 +6,23 @@ import { Button } from '@/components/ui/button';
 import { X, ChevronDown, ChevronUp, Image as ImageIcon, Upload, Library } from 'lucide-react';
 import { useModalUX } from '@/hooks/useModalUX';
 
+export type VariantDraft = {
+  id?: string;
+  item_id?: string;
+  name: string;
+  price: number;
+  is_default: boolean;
+  status: 'ACTIVE' | 'ARCHIVED';
+  sort_order?: number;
+};
+
 export function ItemModal({ 
   isOpen, 
   onClose, 
   item, 
   categories, 
   subcategories = [], 
+  variants = [],
   currency,
   onOptimistic,
   onError
@@ -21,6 +32,7 @@ export function ItemModal({
   item: Record<string, unknown> | null, 
   categories: Record<string, unknown>[], 
   subcategories?: Record<string, unknown>[], 
+  variants?: Record<string, unknown>[],
   currency: string,
   onOptimistic?: (dish: Record<string, unknown>) => void,
   onError?: (err: string) => void
@@ -38,6 +50,11 @@ export function ItemModal({
   const [previewAvail, setPreviewAvail] = useState<boolean>(item ? (item.is_available as boolean) : true);
   const [previewPrepTime, setPreviewPrepTime] = useState<string>((item?.preparation_time_minutes as number)?.toString() || '');
   
+  const initialVariants = (variants || []) as VariantDraft[];
+  const [previewVariants, setPreviewVariants] = useState<VariantDraft[]>(initialVariants);
+  const [showVariants, setShowVariants] = useState(initialVariants.some((v) => v.status === 'ACTIVE'));
+  const [showArchivedVariants, setShowArchivedVariants] = useState(false);
+
   const [isPending, startTransition] = useTransition();
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -75,6 +92,8 @@ export function ItemModal({
     if (formData.get('is_vegan')) newItem.labels.push('VEGAN');
     if (formData.get('is_gluten_free')) newItem.labels.push('GLUTEN_FREE');
     if (formData.get('is_spicy')) newItem.labels.push('SPICY');
+
+    formData.append('variants', JSON.stringify(previewVariants));
 
     onClose();
 
@@ -130,14 +149,14 @@ export function ItemModal({
               {isEditing && <input type="hidden" name="id" value={item.id as string} />}
               <input type="hidden" name="is_available" value={previewAvail ? 'true' : 'false'} />
 
-              {/* Subcategories and Variants Phase 7B Callout */}
+              {/* Subcategories Phase 7B Callout */}
               <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 flex items-start gap-3">
                  <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
                    <span className="text-primary font-bold text-xs">i</span>
                  </div>
                  <div>
-                   <h4 className="text-sm font-bold text-foreground">Subcategories and variants are coming in Phase 7B.</h4>
-                   <p className="text-xs text-muted-foreground mt-1">You will soon be able to add options like Half/Full, Extra Cheese, and size variations. For now, add dishes as single standard items.</p>
+                   <h4 className="text-sm font-bold text-foreground">Modifiers are coming in Phase 7B.</h4>
+                   <p className="text-xs text-muted-foreground mt-1">You will soon be able to add add-ons like Extra Cheese or side options. For now, you can add variants (sizes, etc.) below.</p>
                  </div>
               </div>
 
@@ -254,6 +273,127 @@ export function ItemModal({
                   />
                   <p className="text-xs text-muted-foreground mt-1">Used later for KDS, QR ordering, and customer expectations.</p>
                 </div>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Item Variants</h3>
+                    <p className="text-xs text-muted-foreground">Add sizes or types (e.g., Half/Full, Small/Medium/Large).</p>
+                  </div>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => {
+                      if (!showVariants) setShowVariants(true);
+                      setPreviewVariants(prev => [...prev, { id: `temp_${Date.now()}`, name: '', price: Number(previewPrice) || 0, is_default: prev.filter(v => v.status !== 'ARCHIVED').length === 0, status: 'ACTIVE' }]);
+                    }}
+                  >
+                    Add Variant
+                  </Button>
+                </div>
+                
+                {showVariants && previewVariants.filter(v => v.status === 'ACTIVE').length > 0 && (
+                  <div className="space-y-3 bg-muted/10 p-4 rounded-xl border border-border">
+                    <div className="hidden min-[430px]:grid grid-cols-[1fr_100px_60px_40px] gap-3 text-xs font-bold text-muted-foreground mb-1 px-1">
+                      <div>Name</div>
+                      <div>Price ({currency})</div>
+                      <div className="text-center">Default</div>
+                      <div></div>
+                    </div>
+                    {previewVariants.map((v, i) => v.status === 'ACTIVE' && (
+                      <div key={v.id as string} className="relative flex flex-col min-[430px]:grid min-[430px]:grid-cols-[1fr_100px_60px_40px] gap-2 min-[430px]:gap-3 items-start min-[430px]:items-center max-w-full bg-background min-[430px]:bg-transparent p-3 min-[430px]:p-0 rounded-md border min-[430px]:border-none border-border">
+                        <div className="w-full">
+                          <label className="text-[10px] uppercase font-bold text-muted-foreground mb-1 block min-[430px]:hidden">Name</label>
+                          <input
+                            type="text"
+                            value={v.name as string}
+                            onChange={(e) => setPreviewVariants(prev => prev.map(p => p.id === v.id ? { ...p, name: e.target.value } : p))}
+                            placeholder="Variant Name"
+                            className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                            required
+                          />
+                        </div>
+                        <div className="w-full">
+                          <label className="text-[10px] uppercase font-bold text-muted-foreground mb-1 block min-[430px]:hidden">Price ({currency})</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={v.price as number}
+                            onChange={(e) => setPreviewVariants(prev => prev.map(p => p.id === v.id ? { ...p, price: Number(e.target.value) } : p))}
+                            className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                            required
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 min-[430px]:mt-0 min-[430px]:justify-center">
+                          <input
+                            type="radio"
+                            name={`default_variant_${i}`}
+                            checked={v.is_default as boolean}
+                            onChange={() => setPreviewVariants(prev => prev.map(p => p.status === 'ACTIVE' ? { ...p, is_default: p.id === v.id } : p))}
+                            className="w-4 h-4 text-primary focus:ring-primary/50"
+                          />
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground min-[430px]:hidden">Default</span>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-2 right-2 min-[430px]:static h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={() => {
+                            setPreviewVariants(prev => {
+                              const next = prev.map(p => p.id === v.id ? { ...p, status: 'ARCHIVED' as const, is_default: false } : p);
+                              // Auto-assign default if we just removed the default
+                              const actives = next.filter(p => p.status === 'ACTIVE');
+                              if (actives.length > 0 && !actives.some(p => p.is_default)) {
+                                actives[0].is_default = true;
+                              }
+                              return next;
+                            });
+                          }}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {previewVariants.filter(v => v.status === 'ARCHIVED').length > 0 && (
+                  <div className="mt-4">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowArchivedVariants(!showArchivedVariants)} 
+                      className="text-xs font-bold text-muted-foreground flex items-center gap-1 hover:text-foreground transition-colors"
+                    >
+                      {showArchivedVariants ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      Archived Variants ({previewVariants.filter(v => v.status === 'ARCHIVED').length})
+                    </button>
+                    {showArchivedVariants && (
+                      <div className="mt-3 space-y-2">
+                        {previewVariants.map((v, i) => v.status === 'ARCHIVED' && (
+                          <div key={v.id as string} className="flex items-center justify-between p-2 rounded border border-border bg-muted/20 text-sm">
+                            <span className="text-muted-foreground line-through opacity-70">{v.name as string} ({currency} {(v.price as number).toFixed(2)})</span>
+                            <Button 
+                              type="button" 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-6 text-xs"
+                              onClick={() => {
+                                setPreviewVariants(prev => prev.map(p => p.id === v.id ? { ...p, status: 'ACTIVE' as const, is_default: prev.filter(a => a.status === 'ACTIVE').length === 0 } : p));
+                                setShowVariants(true);
+                              }}
+                            >
+                              Restore
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -422,7 +562,16 @@ export function ItemModal({
              <div className="p-5">
                 <div className="flex justify-between items-start gap-2 mb-2">
                   <h4 className="font-bold text-foreground leading-tight line-clamp-2">{previewName || 'Dish Name'}</h4>
-                  <span className="font-bold text-foreground whitespace-nowrap">{currency} {previewPrice ? Number(previewPrice).toFixed(2) : '0.00'}</span>
+                  <span className="font-bold text-foreground whitespace-nowrap">
+                    {previewVariants.filter(v => v.status === 'ACTIVE').length > 0 ? (
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold leading-none">From</span>
+                        <span className="leading-none">{currency} {Math.min(...previewVariants.filter(v => v.status === 'ACTIVE').map(v => v.price as number)).toFixed(2)}</span>
+                      </div>
+                    ) : (
+                      `${currency} ${previewPrice ? Number(previewPrice).toFixed(2) : '0.00'}`
+                    )}
+                  </span>
                 </div>
                 
                 <div className="flex flex-wrap gap-2 mb-3">

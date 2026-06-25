@@ -73,6 +73,13 @@ export default async function AdminMenuPage() {
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
 
+  const { data: variants } = await supabase
+    .from('menu_item_variants')
+    .select('*')
+    .eq('tenant_id', profile.tenant_id)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+
   return (
     <div className="flex flex-col h-full min-h-[calc(100vh-4rem)]">
       <main className="flex-1 p-4 md:p-6 max-w-6xl">
@@ -93,6 +100,7 @@ export default async function AdminMenuPage() {
             categories={categories || []} 
             subcategories={subcategories || []}
             items={items || []} 
+            variants={variants || []}
             currency={settings?.currency || 'USD'} 
           />
         </div>

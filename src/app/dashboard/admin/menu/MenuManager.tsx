@@ -298,7 +298,9 @@ function BulkRestoreCategoriesAction({ selectedIds, onClear, onOptimistic, onErr
   );
 }
 
-export function MenuManager({ categories, subcategories = [], items, currency }: { categories: Category[], subcategories?: Subcategory[], items: Item[], currency: string }) {
+type Variant = Record<string, unknown>;
+
+export function MenuManager({ categories, subcategories = [], items, variants = [], currency }: { categories: Category[], subcategories?: Subcategory[], items: Item[], variants?: Variant[], currency: string }) {
   const [activeSection, setActiveSection] = useState<'DISHES' | 'CATEGORIES' | 'ARCHIVED'>('DISHES');
   const [globalError, setGlobalError] = useState<string | null>(null);
 
@@ -313,6 +315,12 @@ export function MenuManager({ categories, subcategories = [], items, currency }:
   const [optimisticItems, addOptimisticItem] = useOptimistic(items, (state, updatedItem: Item) => 
     state.map(i => i.id === updatedItem.id ? updatedItem : i)
   );
+
+  const [optimisticVariants, addOptimisticVariant] = useOptimistic(variants, (state, updatedVariant: Variant) => {
+    const exists = state.find(v => v.id === updatedVariant.id);
+    if (exists) return state.map(v => v.id === updatedVariant.id ? updatedVariant : v);
+    return [...state, updatedVariant];
+  });
   
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isSubcategoryModalOpen, setIsSubcategoryModalOpen] = useState(false);
@@ -360,10 +368,27 @@ export function MenuManager({ categories, subcategories = [], items, currency }:
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
         if (!(item.name as string).toLowerCase().includes(q) && !((item.description as string) || '').toLowerCase().includes(q)) return false;
-      }
+    }
       return true;
     });
   }, [activeItems, filterCategory, filterSubcategory, filterDishType, filterAvailability, searchQuery]);
+
+  const getItemPriceDisplay = (item: Item) => {
+    const itemVariants = optimisticVariants.filter(v => v.item_id === item.id && v.status === 'ACTIVE');
+    if (itemVariants.length > 0) {
+      const minPrice = Math.min(...itemVariants.map(v => v.price as number));
+      return (
+        <div className="flex flex-col items-start gap-1">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold leading-none">From</span>
+          <span className="leading-none">{currency} {minPrice.toFixed(2)}</span>
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20 mt-0.5">
+             {itemVariants.length} Variant{itemVariants.length > 1 ? 's' : ''}
+          </span>
+        </div>
+      );
+    }
+    return <span className="leading-none">{currency} {(item.price as number).toFixed(2)}</span>;
+  };
 
   const openAddCategory = () => {
     setEditingCategory(null);
@@ -738,7 +763,7 @@ export function MenuManager({ categories, subcategories = [], items, currency }:
                      )}
                      <div className="flex-1">
                        <h4 className="font-bold text-foreground leading-tight line-clamp-2">{item.name as string}</h4>
-                       <span className="text-sm font-bold text-foreground mt-1 block">{currency} {(item.price as number).toFixed(2)}</span>
+                       <span className="text-sm font-bold text-foreground mt-1 block flex items-start">{getItemPriceDisplay(item)}</span>
                        <div className="flex flex-wrap gap-2 mt-2">
                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold uppercase tracking-wider text-muted-foreground border border-border/50">
                             {getCategoryName(item.category_id)} {item.subcategory_id ? `> ${getSubcategoryName(item.subcategory_id)}` : ''}
@@ -814,7 +839,7 @@ export function MenuManager({ categories, subcategories = [], items, currency }:
                          </div>
                        </div>
                      </td>
-                     <td className="px-5 py-4 font-medium text-foreground">{currency} {(item.price as number).toFixed(2)}</td>
+                     <td className="px-5 py-4 font-medium text-foreground">{getItemPriceDisplay(item)}</td>
                      <td className="px-5 py-4 text-muted-foreground">
                         <div className="flex flex-col gap-1 items-start">
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold uppercase tracking-wider text-muted-foreground border border-border/50">
@@ -1061,6 +1086,7 @@ export function MenuManager({ categories, subcategories = [], items, currency }:
           item={editingItem}
           categories={activeCategories}
           subcategories={activeSubcategories}
+          variants={optimisticVariants.filter(v => v.item_id === editingItem?.id)}
           currency={currency}
           onOptimistic={addOptimisticItem}
           onError={setGlobalError}

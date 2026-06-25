@@ -737,7 +737,40 @@ export async function createMenuItem(prevState: any, formData: FormData) {
       return { success: false, error: 'An active item with this name already exists in this category.' };
     }
 
-    const { error } = await adminSupabase.from('menu_items').insert({
+    const variantsRaw = formData.get('variants')?.toString();
+    let variants: any[] = [];
+    if (variantsRaw) {
+      try {
+        variants = JSON.parse(variantsRaw);
+        if (!Array.isArray(variants)) throw new Error();
+        if (variants.length > 25) return { success: false, error: 'Maximum 25 variants allowed.' };
+        
+        let activeVariantsCount = 0;
+        let defaultCount = 0;
+        const activeNames = new Set<string>();
+        
+        for (const v of variants) {
+          if (v.status !== 'ARCHIVED') {
+            activeVariantsCount++;
+            if (!v.name || v.name.trim().length === 0) return { success: false, error: 'Variant name is required.' };
+            if (v.name.length > 80) return { success: false, error: 'Variant name is too long.' };
+            if (typeof v.price !== 'number' || v.price < 0) return { success: false, error: 'Variant price must be valid.' };
+            const lowerName = v.name.toLowerCase().trim();
+            if (activeNames.has(lowerName)) return { success: false, error: 'Duplicate active variant names not allowed.' };
+            activeNames.add(lowerName);
+            if (v.is_default) defaultCount++;
+          }
+        }
+        
+        if (activeVariantsCount > 0 && defaultCount !== 1) {
+          return { success: false, error: 'Exactly one active variant must be marked as default.' };
+        }
+      } catch (e) {
+        return { success: false, error: 'Invalid variants format.' };
+      }
+    }
+
+    const { data: newItem, error } = await adminSupabase.from('menu_items').insert({
       tenant_id,
       category_id,
       subcategory_id,
@@ -751,9 +784,25 @@ export async function createMenuItem(prevState: any, formData: FormData) {
       dietary_labels,
       sort_order,
       is_available
-    });
+    }).select('id').single();
 
     if (error) throw error;
+    
+    if (variants.length > 0) {
+      const variantsToInsert = variants.map((v, index) => ({
+        tenant_id,
+        item_id: newItem.id,
+        name: v.name.trim(),
+        price: v.price,
+        is_default: v.is_default,
+        sort_order: index,
+        status: v.status || 'ACTIVE'
+      }));
+      const { error: varError } = await adminSupabase.from('menu_item_variants').insert(variantsToInsert);
+      if (varError) {
+        console.error('Failed to insert variants:', varError);
+      }
+    }
     
     revalidatePath('/dashboard/admin/menu');
     return { success: true, error: null };
@@ -840,6 +889,39 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       return { success: false, error: 'An active item with this name already exists in this category.' };
     }
 
+    const variantsRaw = formData.get('variants')?.toString();
+    let variants: any[] = [];
+    if (variantsRaw) {
+      try {
+        variants = JSON.parse(variantsRaw);
+        if (!Array.isArray(variants)) throw new Error();
+        if (variants.length > 25) return { success: false, error: 'Maximum 25 variants allowed.' };
+        
+        let activeVariantsCount = 0;
+        let defaultCount = 0;
+        const activeNames = new Set<string>();
+        
+        for (const v of variants) {
+          if (v.status !== 'ARCHIVED') {
+            activeVariantsCount++;
+            if (!v.name || v.name.trim().length === 0) return { success: false, error: 'Variant name is required.' };
+            if (v.name.length > 80) return { success: false, error: 'Variant name is too long.' };
+            if (typeof v.price !== 'number' || v.price < 0) return { success: false, error: 'Variant price must be valid.' };
+            const lowerName = v.name.toLowerCase().trim();
+            if (activeNames.has(lowerName)) return { success: false, error: 'Duplicate active variant names not allowed.' };
+            activeNames.add(lowerName);
+            if (v.is_default) defaultCount++;
+          }
+        }
+        
+        if (activeVariantsCount > 0 && defaultCount !== 1) {
+          return { success: false, error: 'Exactly one active variant must be marked as default.' };
+        }
+      } catch (e) {
+        return { success: false, error: 'Invalid variants format.' };
+      }
+    }
+
     const { error } = await adminSupabase
       .from('menu_items')
       .update({
@@ -862,6 +944,47 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       .single();
 
     if (error) throw error;
+    
+    if (variants.length > 0) {
+      const variantsToUpdate = variants
+        .filter(v => v.id && !v.id.startsWith('temp_'))
+        .map((v, index) => ({
+          id: v.id,
+          tenant_id,
+          item_id: id,
+          name: v.name.trim(),
+          price: v.price,
+          is_default: v.is_default,
+          sort_order: index,
+          status: v.status || 'ACTIVE'
+        }));
+
+      const variantsToInsert = variants
+        .filter(v => !v.id || v.id.startsWith('temp_'))
+        .map((v, index) => ({
+          tenant_id,
+          item_id: id,
+          name: v.name.trim(),
+          price: v.price,
+          is_default: v.is_default,
+          sort_order: index,
+          status: v.status || 'ACTIVE'
+        }));
+
+      if (variantsToUpdate.length > 0) {
+        const { error: updateError } = await adminSupabase.from('menu_item_variants').upsert(variantsToUpdate);
+        if (updateError) {
+          console.error('Failed to update variants:', updateError);
+        }
+      }
+
+      if (variantsToInsert.length > 0) {
+        const { error: insertError } = await adminSupabase.from('menu_item_variants').insert(variantsToInsert);
+        if (insertError) {
+          console.error('Failed to insert variants:', insertError);
+        }
+      }
+    }
     
     revalidatePath('/dashboard/admin/menu');
     return { success: true, error: null };
