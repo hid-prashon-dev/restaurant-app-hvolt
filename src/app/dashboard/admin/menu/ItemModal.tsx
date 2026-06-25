@@ -1,34 +1,105 @@
 'use client';
 
-import { useActionState, useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { createMenuItem, updateMenuItem } from '@/app/actions/menu';
 import { Button } from '@/components/ui/button';
 import { X, ChevronDown, ChevronUp, Image as ImageIcon, Upload, Library } from 'lucide-react';
+import { useModalUX } from '@/hooks/useModalUX';
 
-export function ItemModal({ isOpen, onClose, item, categories, currency }: { isOpen: boolean, onClose: () => void, item: Record<string, unknown> | null, categories: Record<string, unknown>[], currency: string }) {
+export function ItemModal({ 
+  isOpen, 
+  onClose, 
+  item, 
+  categories, 
+  subcategories = [], 
+  currency,
+  onOptimistic,
+  onError
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  item: Record<string, unknown> | null, 
+  categories: Record<string, unknown>[], 
+  subcategories?: Record<string, unknown>[], 
+  currency: string,
+  onOptimistic?: (dish: Record<string, unknown>) => void,
+  onError?: (err: string) => void
+}) {
   const isEditing = !!item;
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [previewImage, setPreviewImage] = useState<string>((item?.image_url as string) || '');
   const [previewName, setPreviewName] = useState<string>((item?.name as string) || '');
   const [previewPrice, setPreviewPrice] = useState<string>((item?.price as number)?.toString() || '');
   const [previewCategory, setPreviewCategory] = useState<string>((item?.category_id as string) || categories[0]?.id as string || '');
+  const [previewSubcategory, setPreviewSubcategory] = useState<string>((item?.subcategory_id as string) || '');
+  const [previewDishType, setPreviewDishType] = useState<string>((item?.dish_type as string) || '');
+  const [previewRecommended, setPreviewRecommended] = useState<boolean>(item ? !!item.is_recommended : false);
   const [previewDesc, setPreviewDesc] = useState<string>((item?.description as string) || '');
   const [previewAvail, setPreviewAvail] = useState<boolean>(item ? (item.is_available as boolean) : true);
+  const [previewPrepTime, setPreviewPrepTime] = useState<string>((item?.preparation_time_minutes as number)?.toString() || '');
   
-  const [state, formAction, isPending] = useActionState(
-    isEditing ? updateMenuItem : createMenuItem,
-    { success: false, error: null } as { success: boolean, error: string | null }
-  );
+  const [isPending, startTransition] = useTransition();
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (state.success) {
-      onClose();
+  useModalUX(isOpen, onClose);
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setLocalError(null);
+    const formData = new FormData(e.currentTarget);
+    
+    // Quick validation
+    if (!formData.get('name') || !formData.get('price') || !formData.get('category_id')) {
+      setLocalError('Please fill in all required fields.');
+      return;
     }
-  }, [state.success, onClose]);
+
+    const newItem = {
+      ...item,
+      id: isEditing ? item?.id : `temp-${Date.now()}`,
+      name: formData.get('name'),
+      price: Number(formData.get('price')),
+      category_id: formData.get('category_id'),
+      subcategory_id: formData.get('subcategory_id') || null,
+      dish_type: formData.get('dish_type') || null,
+      is_recommended: formData.get('is_recommended') === 'on',
+      is_available: formData.get('is_available') === 'true',
+      preparation_time_minutes: formData.get('preparation_time_minutes') ? Number(formData.get('preparation_time_minutes')) : null,
+      description: formData.get('description') || null,
+      image_url: formData.get('image_url') || null,
+      status: 'ACTIVE',
+      labels: [] as string[],
+    };
+    
+    if (formData.get('is_veg')) newItem.labels.push('VEG');
+    if (formData.get('is_vegan')) newItem.labels.push('VEGAN');
+    if (formData.get('is_gluten_free')) newItem.labels.push('GLUTEN_FREE');
+    if (formData.get('is_spicy')) newItem.labels.push('SPICY');
+
+    onClose();
+
+    startTransition(async () => {
+      if (onOptimistic) onOptimistic(newItem);
+      const action = isEditing ? updateMenuItem : createMenuItem;
+      const res = await action(null, formData);
+      if (!res.success) {
+        if (onError) onError(res.error || 'Failed to save dish.');
+      }
+    });
+  };
 
   if (!isOpen) return null;
 
   const categoryName = categories.find(c => c.id === previewCategory)?.name as string || 'Uncategorized';
+  const availableSubcategories = subcategories.filter(s => s.category_id === previewCategory && s.status === 'ACTIVE');
+  const subcategoryName = availableSubcategories.find(s => s.id === previewSubcategory)?.name as string || '';
+  
+  // Reset subcategory if it doesn't belong to newly selected category
+  useEffect(() => {
+    if (previewSubcategory && !availableSubcategories.find(s => s.id === previewSubcategory)) {
+      setPreviewSubcategory('');
+    }
+  }, [previewCategory, availableSubcategories, previewSubcategory]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
@@ -49,10 +120,10 @@ export function ItemModal({ isOpen, onClose, item, categories, currency }: { isO
           </div>
 
           <div className="overflow-y-auto p-6 flex-1 custom-scrollbar">
-            <form action={formAction} className="space-y-8" id="item-form">
-              {state.error && (
+            <form onSubmit={handleSubmit} className="space-y-8" id="item-form">
+              {localError && (
                 <div className="text-sm text-destructive font-medium bg-destructive/10 border border-destructive/20 p-3 rounded-md">
-                  {state.error as string}
+                  {localError as string}
                 </div>
               )}
 
@@ -76,10 +147,17 @@ export function ItemModal({ isOpen, onClose, item, categories, currency }: { isO
                     Dish Type
                   </label>
                   <select 
-                    disabled
-                    className="w-full flex h-10 rounded-md border border-input bg-muted/50 text-muted-foreground px-3 py-2 text-sm opacity-80 cursor-not-allowed" 
+                    name="dish_type"
+                    value={previewDishType}
+                    onChange={(e) => setPreviewDishType(e.target.value)}
+                    className="w-full flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50" 
                   >
-                    <option>Not set (Planned Phase 7B)</option>
+                    <option value="">None / General</option>
+                    <option value="VEG">Veg</option>
+                    <option value="NON_VEG">Non-Veg</option>
+                    <option value="VEGAN">Vegan</option>
+                    <option value="EGG">Egg</option>
+                    <option value="SEAFOOD">Seafood</option>
                   </select>
                 </div>
                 
@@ -121,6 +199,27 @@ export function ItemModal({ isOpen, onClose, item, categories, currency }: { isO
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
+                    Subcategory
+                  </label>
+                  <select 
+                    name="subcategory_id" 
+                    value={previewSubcategory}
+                    onChange={e => setPreviewSubcategory(e.target.value)}
+                    className="w-full flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50" 
+                    disabled={availableSubcategories.length === 0}
+                  >
+                    <option value="">No Subcategory</option>
+                    {availableSubcategories.map(s => (
+                      <option key={s.id as string} value={s.id as string}>{s.name as string}</option>
+                    ))}
+                  </select>
+                  {availableSubcategories.length === 0 && previewCategory && (
+                    <p className="text-xs text-muted-foreground mt-1">This category has no active subcategories.</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
                     Price <span className="text-destructive">*</span>
                   </label>
                   <div className="relative">
@@ -137,6 +236,23 @@ export function ItemModal({ isOpen, onClose, item, categories, currency }: { isO
                       required
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    Preparation Time (Minutes)
+                  </label>
+                  <input 
+                    type="number" 
+                    name="preparation_time_minutes" 
+                    min="0"
+                    max="240"
+                    value={previewPrepTime}
+                    onChange={e => setPreviewPrepTime(e.target.value)}
+                    placeholder="e.g. 15"
+                    className="w-full flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50" 
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Used later for KDS, QR ordering, and customer expectations.</p>
                 </div>
               </div>
 
@@ -206,6 +322,19 @@ export function ItemModal({ isOpen, onClose, item, categories, currency }: { isO
                   <label className="flex items-center space-x-2 text-sm cursor-pointer hover:text-primary transition-colors">
                     <input type="checkbox" name="is_spicy" defaultChecked={((item?.labels as string[]) || []).includes('SPICY')} className="rounded border-input text-primary focus:ring-primary/50 w-4 h-4" />
                     <span className="font-medium">Spicy</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-4 rounded-xl border border-border bg-muted/10">
+                  <div>
+                    <h4 className="text-sm font-bold text-foreground">Recommended Dish</h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">Highlight this dish on the menu with a special badge.</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" name="is_recommended" checked={previewRecommended} onChange={e => setPreviewRecommended(e.target.checked)} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                   </label>
                 </div>
               </div>
@@ -291,14 +420,26 @@ export function ItemModal({ isOpen, onClose, item, categories, currency }: { isO
              </div>
              
              <div className="p-5">
-               <div className="flex justify-between items-start gap-2 mb-2">
-                 <h4 className="font-bold text-foreground leading-tight line-clamp-2">{previewName || 'Dish Name'}</h4>
-                 <span className="font-bold text-foreground whitespace-nowrap">{currency} {previewPrice ? Number(previewPrice).toFixed(2) : '0.00'}</span>
-               </div>
-               
-               <p className="text-xs text-muted-foreground mb-3 font-medium px-2 py-0.5 bg-muted rounded-md inline-block">
-                 {categoryName}
-               </p>
+                <div className="flex justify-between items-start gap-2 mb-2">
+                  <h4 className="font-bold text-foreground leading-tight line-clamp-2">{previewName || 'Dish Name'}</h4>
+                  <span className="font-bold text-foreground whitespace-nowrap">{currency} {previewPrice ? Number(previewPrice).toFixed(2) : '0.00'}</span>
+                </div>
+                
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 bg-muted rounded-md">
+                    {categoryName} {subcategoryName ? `> ${subcategoryName}` : ''}
+                  </span>
+                  {previewDishType && previewDishType !== 'GENERAL' && (
+                    <span className="text-[10px] uppercase tracking-wider font-bold text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
+                      {previewDishType.replace('_', '-')}
+                    </span>
+                  )}
+                  {previewRecommended && (
+                    <span className="text-[10px] uppercase tracking-wider font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                      Recommended
+                    </span>
+                  )}
+                </div>
                
                {previewDesc ? (
                  <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">{previewDesc}</p>

@@ -374,6 +374,290 @@ export async function createTemplateCategories(prevState: any, formData: FormDat
 }
 
 // ------------------------------------------------------------------
+// Menu Subcategories
+// ------------------------------------------------------------------
+
+export async function createMenuSubcategories(category_id: string, subcategories: { name: string; description?: string; sort_order?: number }[]) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    
+    if (!category_id) return { success: false, error: 'Parent category is required.' };
+    if (!subcategories || subcategories.length === 0) return { success: false, error: 'At least one subcategory is required.' };
+    if (subcategories.length > 25) return { success: false, error: 'Maximum 25 subcategories per request.' };
+
+    const validSubcategories = subcategories.map(s => ({
+      name: s.name.trim(),
+      description: s.description?.trim() || null,
+      sort_order: s.sort_order || 0
+    })).filter(s => s.name.length > 0);
+
+    if (validSubcategories.length === 0) return { success: false, error: 'No valid subcategory names provided.' };
+    
+    // Check duplicates in batch
+    const nameSet = new Set<string>();
+    for (const sub of validSubcategories) {
+      if (sub.name.length > 80) return { success: false, error: `Subcategory name "${sub.name}" is too long (max 80 chars).` };
+      const lowerName = sub.name.toLowerCase();
+      if (nameSet.has(lowerName)) return { success: false, error: `Duplicate name "${sub.name}" in batch.` };
+      nameSet.add(lowerName);
+    }
+
+    const adminSupabase = createAdminClient();
+    
+    // Verify category belongs to tenant
+    const { data: cat } = await adminSupabase
+      .from('menu_categories')
+      .select('id')
+      .eq('id', category_id)
+      .eq('tenant_id', tenant_id)
+      .single();
+      
+    if (!cat) return { success: false, error: 'Invalid parent category.' };
+
+    // Check duplicate existing active
+    const { data: existing } = await adminSupabase
+      .from('menu_subcategories')
+      .select('name')
+      .eq('category_id', category_id)
+      .eq('status', 'ACTIVE');
+      
+    const existingNames = new Set((existing || []).map(s => s.name.toLowerCase()));
+    for (const sub of validSubcategories) {
+      if (existingNames.has(sub.name.toLowerCase())) {
+        return { success: false, error: `A subcategory named "${sub.name}" already exists and is active.` };
+      }
+    }
+
+    const inserts = validSubcategories.map(sub => ({
+      tenant_id,
+      category_id,
+      name: sub.name,
+      description: sub.description,
+      sort_order: sub.sort_order
+    }));
+
+    const { data: inserted, error } = await adminSupabase.from('menu_subcategories').insert(inserts).select();
+
+    if (error) throw error;
+    if (!inserted || inserted.length === 0) return { success: false, error: 'Failed to create subcategories.' };
+    
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null, data: inserted };
+  } catch (err: any) {
+    console.error('createMenuSubcategories error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function createMenuSubcategory(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    
+    const category_id = formData.get('category_id')?.toString();
+    const name = formData.get('name')?.toString().trim();
+    const description = formData.get('description')?.toString().trim();
+    const sort_order = parseInt(formData.get('sort_order')?.toString() || '0', 10);
+    
+    if (!category_id) return { success: false, error: 'Parent category is required.' };
+    if (!name) return { success: false, error: 'Subcategory name is required.' };
+    if (name.length > 80) return { success: false, error: 'Subcategory name is too long (max 80 chars).' };
+
+    const adminSupabase = createAdminClient();
+    
+    // Verify category belongs to tenant
+    const { data: cat } = await adminSupabase
+      .from('menu_categories')
+      .select('id')
+      .eq('id', category_id)
+      .eq('tenant_id', tenant_id)
+      .single();
+      
+    if (!cat) return { success: false, error: 'Invalid parent category.' };
+
+    // Check duplicate
+    const { data: existing } = await adminSupabase
+      .from('menu_subcategories')
+      .select('id, status')
+      .eq('category_id', category_id)
+      .ilike('name', name)
+      .maybeSingle();
+      
+    if (existing) {
+      if (existing.status === 'ARCHIVED') {
+        return { success: false, error: `A subcategory named "${name}" is archived. Restore it instead.` };
+      }
+      return { success: false, error: `A subcategory named "${name}" already exists in this category.` };
+    }
+
+    const { error } = await adminSupabase.from('menu_subcategories').insert({
+      tenant_id,
+      category_id,
+      name,
+      description: description || null,
+      sort_order
+    });
+
+    if (error) throw error;
+    
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('createMenuSubcategory error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function updateMenuSubcategory(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    
+    const id = formData.get('id')?.toString();
+    const name = formData.get('name')?.toString().trim();
+    const description = formData.get('description')?.toString().trim();
+    const sort_order = parseInt(formData.get('sort_order')?.toString() || '0', 10);
+    
+    if (!id) return { success: false, error: 'Subcategory ID is required.' };
+    if (!name) return { success: false, error: 'Subcategory name is required.' };
+    if (name.length > 80) return { success: false, error: 'Subcategory name is too long.' };
+
+    const adminSupabase = createAdminClient();
+    
+    // Check duplicate
+    const { data: existing } = await adminSupabase
+      .from('menu_subcategories')
+      .select('id, category_id')
+      .ilike('name', name)
+      .neq('id', id)
+      .maybeSingle();
+      
+    if (existing) {
+      // Need to make sure it's duplicate in the same category
+      // First get current subcategory
+      const { data: current } = await adminSupabase
+        .from('menu_subcategories')
+        .select('category_id')
+        .eq('id', id)
+        .eq('tenant_id', tenant_id)
+        .single();
+        
+      if (current && current.category_id === existing.category_id) {
+        return { success: false, error: `A subcategory named "${name}" already exists in this category.` };
+      }
+    }
+
+    const { error } = await adminSupabase
+      .from('menu_subcategories')
+      .update({
+        name,
+        description: description || null,
+        sort_order
+      })
+      .eq('id', id)
+      .eq('tenant_id', tenant_id)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+    
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('updateMenuSubcategory error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function archiveMenuSubcategory(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    const id = formData.get('id')?.toString();
+    
+    if (!id) return { success: false, error: 'Subcategory ID is required.' };
+
+    const adminSupabase = createAdminClient();
+    
+    // Ensure no active dishes are in this subcategory
+    const { count, error: countError } = await adminSupabase
+      .from('menu_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('subcategory_id', id)
+      .eq('status', 'ACTIVE')
+      .eq('tenant_id', tenant_id);
+      
+    if (countError) throw countError;
+    
+    if (count && count > 0) {
+      return { success: false, error: `Cannot archive subcategory. It has ${count} active dish(es).` };
+    }
+
+    const { data, error } = await adminSupabase
+      .from('menu_subcategories')
+      .update({ status: 'ARCHIVED' })
+      .eq('id', id)
+      .eq('tenant_id', tenant_id)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+    if (!data) return { success: false, error: 'Subcategory not found.' };
+
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('archiveMenuSubcategory error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function restoreMenuSubcategory(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    const id = formData.get('id')?.toString();
+    
+    if (!id) return { success: false, error: 'Subcategory ID is required.' };
+
+    const adminSupabase = createAdminClient();
+
+    // Verify parent category is ACTIVE
+    const { data: subcat } = await adminSupabase
+      .from('menu_subcategories')
+      .select('category_id')
+      .eq('id', id)
+      .eq('tenant_id', tenant_id)
+      .single();
+      
+    if (!subcat) return { success: false, error: 'Subcategory not found.' };
+    
+    const { data: cat } = await adminSupabase
+      .from('menu_categories')
+      .select('status')
+      .eq('id', subcat.category_id)
+      .single();
+      
+    if (cat?.status === 'ARCHIVED') {
+      return { success: false, error: 'Cannot restore subcategory because its parent category is archived. Restore the category first.' };
+    }
+
+    const { data, error } = await adminSupabase
+      .from('menu_subcategories')
+      .update({ status: 'ACTIVE' })
+      .eq('id', id)
+      .eq('tenant_id', tenant_id)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+    if (!data) return { success: false, error: 'Subcategory not found.' };
+
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('restoreMenuSubcategory error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+// ------------------------------------------------------------------
 // Menu Items
 // ------------------------------------------------------------------
 
@@ -388,6 +672,12 @@ export async function createMenuItem(prevState: any, formData: FormData) {
     const sort_order = parseInt(formData.get('sort_order')?.toString() || '0', 10);
     const is_available = formData.get('is_available') === 'on' || formData.get('is_available') === 'true';
     const image_url = formData.get('image_url')?.toString().trim();
+    
+    const subcategory_id = formData.get('subcategory_id')?.toString() || null;
+    const dish_type = formData.get('dish_type')?.toString() || null;
+    const is_recommended = formData.get('is_recommended') === 'on' || formData.get('is_recommended') === 'true';
+    const prepTimeRaw = formData.get('preparation_time_minutes')?.toString();
+    const preparation_time_minutes = prepTimeRaw ? parseInt(prepTimeRaw, 10) : null;
     
     // Basic dietary labels logic: comma separated or multiple checkboxes (for simplicity, we parse comma-separated if string, or assume it's sent as multiple entries if handled client-side)
     // For Phase 7A, we will parse a simple comma separated list or array if we encode it.
@@ -406,6 +696,10 @@ export async function createMenuItem(prevState: any, formData: FormData) {
     if (image_url && !/^https?:\/\/.+/.test(image_url)) {
       return { success: false, error: 'Image URL must be a valid http or https link.' };
     }
+    
+    if (preparation_time_minutes !== null && (isNaN(preparation_time_minutes) || preparation_time_minutes < 0 || preparation_time_minutes > 240)) {
+      return { success: false, error: 'Preparation time must be an integer between 0 and 240.' };
+    }
 
     const adminSupabase = createAdminClient();
     
@@ -418,6 +712,17 @@ export async function createMenuItem(prevState: any, formData: FormData) {
       .single();
       
     if (!cat) return { success: false, error: 'Invalid category.' };
+    
+    if (subcategory_id) {
+      const { data: sub } = await adminSupabase
+        .from('menu_subcategories')
+        .select('id')
+        .eq('id', subcategory_id)
+        .eq('category_id', category_id)
+        .eq('tenant_id', tenant_id)
+        .single();
+      if (!sub) return { success: false, error: 'Subcategory must belong to the selected category.' };
+    }
     
     // Check for duplicate name in category
     const { data: existing } = await adminSupabase
@@ -435,6 +740,10 @@ export async function createMenuItem(prevState: any, formData: FormData) {
     const { error } = await adminSupabase.from('menu_items').insert({
       tenant_id,
       category_id,
+      subcategory_id,
+      dish_type,
+      is_recommended,
+      preparation_time_minutes,
       name,
       description: description || null,
       price,
@@ -467,6 +776,12 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
     const is_available = formData.get('is_available') === 'on' || formData.get('is_available') === 'true';
     const image_url = formData.get('image_url')?.toString().trim();
     
+    const subcategory_id = formData.get('subcategory_id')?.toString() || null;
+    const dish_type = formData.get('dish_type')?.toString() || null;
+    const is_recommended = formData.get('is_recommended') === 'on' || formData.get('is_recommended') === 'true';
+    const prepTimeRaw = formData.get('preparation_time_minutes')?.toString();
+    const preparation_time_minutes = prepTimeRaw ? parseInt(prepTimeRaw, 10) : null;
+    
     const dietaryRaw = formData.get('dietary_labels')?.toString() || '';
     const dietary_labels = dietaryRaw.split(',').map(l => l.trim()).filter(l => l.length > 0);
 
@@ -483,6 +798,10 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
     if (image_url && !/^https?:\/\/.+/.test(image_url)) {
       return { success: false, error: 'Image URL must be a valid http or https link.' };
     }
+    
+    if (preparation_time_minutes !== null && (isNaN(preparation_time_minutes) || preparation_time_minutes < 0 || preparation_time_minutes > 240)) {
+      return { success: false, error: 'Preparation time must be an integer between 0 and 240.' };
+    }
 
     const adminSupabase = createAdminClient();
     
@@ -495,6 +814,17 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       .single();
       
     if (!cat) return { success: false, error: 'Invalid category.' };
+    
+    if (subcategory_id) {
+      const { data: sub } = await adminSupabase
+        .from('menu_subcategories')
+        .select('id')
+        .eq('id', subcategory_id)
+        .eq('category_id', category_id)
+        .eq('tenant_id', tenant_id)
+        .single();
+      if (!sub) return { success: false, error: 'Subcategory must belong to the selected category.' };
+    }
     
     // Check duplicate
     const { data: existing } = await adminSupabase
@@ -514,6 +844,10 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       .from('menu_items')
       .update({
         category_id,
+        subcategory_id,
+        dish_type,
+        is_recommended,
+        preparation_time_minutes,
         name,
         description: description || null,
         price,

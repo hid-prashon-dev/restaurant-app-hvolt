@@ -4,10 +4,13 @@ import { useActionState, useEffect, useState } from 'react';
 import { createMenuCategory, updateMenuCategory, restoreMenuCategory } from '@/app/actions/menu';
 import { Button } from '@/components/ui/button';
 import { X, ChevronDown, ChevronUp } from 'lucide-react';
+import { useModalUX } from '@/hooks/useModalUX';
 
 export function CategoryModal({ isOpen, onClose, category }: { isOpen: boolean, onClose: () => void, category: Record<string, unknown> | null }) {
   const isEditing = !!category;
   const [showAdvanced, setShowAdvanced] = useState(false);
+  
+  useModalUX(isOpen, onClose);
   
   const [state, formAction, isPending] = useActionState(
     isEditing ? updateMenuCategory : createMenuCategory,

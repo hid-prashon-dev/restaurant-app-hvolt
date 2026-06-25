@@ -51,9 +51,16 @@ export default async function AdminMenuPage() {
     );
   }
 
-  // Fetch categories and items
+  // Fetch categories, subcategories, and items
   const { data: categories } = await supabase
     .from('menu_categories')
+    .select('*')
+    .eq('tenant_id', profile.tenant_id)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  const { data: subcategories } = await supabase
+    .from('menu_subcategories')
     .select('*')
     .eq('tenant_id', profile.tenant_id)
     .order('sort_order', { ascending: true })
@@ -84,6 +91,7 @@ export default async function AdminMenuPage() {
           
           <MenuManager 
             categories={categories || []} 
+            subcategories={subcategories || []}
             items={items || []} 
             currency={settings?.currency || 'USD'} 
           />

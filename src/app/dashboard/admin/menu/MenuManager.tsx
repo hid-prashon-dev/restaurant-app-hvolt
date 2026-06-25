@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useMemo, useTransition, useOptimistic, useEffect, useActionState } from 'react';
-import { createTemplateCategories, archiveMenuCategory, archiveMenuItem, restoreMenuCategory, restoreMenuItem, bulkArchiveMenuCategories, bulkRestoreMenuCategories } from '@/app/actions/menu';
+import { createTemplateCategories, archiveMenuCategory, archiveMenuItem, restoreMenuCategory, restoreMenuItem, bulkArchiveMenuCategories, bulkRestoreMenuCategories, archiveMenuSubcategory, restoreMenuSubcategory } from '@/app/actions/menu';
 import { Plus, Archive, Search, Filter, SlidersHorizontal, Edit2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CategoryModal } from './CategoryModal';
 import { ItemModal } from './ItemModal';
 import { ToggleAvailabilityButton } from './ToggleAvailabilityButton';
+import { SubcategoryModal } from './SubcategoryModal';
 
 type Category = Record<string, unknown>;
+type Subcategory = Record<string, unknown>;
 type Item = Record<string, unknown>;
 
 function ActionConfirmModal({ isOpen, onClose, onConfirm, title, message }: { isOpen: boolean, onClose: () => void, onConfirm: () => void, title: string, message: string }) {
@@ -110,6 +112,47 @@ function ArchiveCategoryAction({ category, activeItemsCount, onOptimistic, onErr
   );
 }
 
+function ArchiveSubcategoryAction({ subcategory, activeItemsCount, onOptimistic, onError }: { subcategory: Subcategory, activeItemsCount: number, onOptimistic?: () => void, onError?: (err: string | null) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const handleOpen = () => {
+    if (activeItemsCount > 0) {
+      onError?.(`Cannot archive subcategory "${subcategory.name}" because it contains ${activeItemsCount} active dish(es). Archive the dishes first.`);
+      return;
+    }
+    setIsOpen(true);
+  };
+
+  const handleConfirm = () => {
+    setIsOpen(false);
+    startTransition(async () => {
+      onOptimistic?.();
+      const fd = new FormData();
+      fd.append('id', subcategory.id as string);
+      const res = await archiveMenuSubcategory(null, fd);
+      if (!res.success) {
+        onError?.(res.error);
+      }
+    });
+  };
+
+  return (
+    <>
+      <Button 
+        variant="ghost" 
+        size="sm" 
+        className="h-6 px-2 text-[10px] text-muted-foreground hover:text-destructive disabled:opacity-50" 
+        disabled={isPending}
+        onClick={handleOpen}
+      >
+        Archive
+      </Button>
+      <ActionConfirmModal isOpen={isOpen} onClose={() => setIsOpen(false)} onConfirm={handleConfirm} title="Archive Subcategory" message={`Are you sure you want to archive "${subcategory.name}"?`} />
+    </>
+  );
+}
+
 function RestoreItemAction({ item, activeCategoryIds, onOptimistic, onError }: { item: Item, activeCategoryIds: string[], onOptimistic?: () => void, onError?: (err: string | null) => void }) {
   const [isPending, startTransition] = useTransition();
 
@@ -135,6 +178,32 @@ function RestoreItemAction({ item, activeCategoryIds, onOptimistic, onError }: {
         Restore Dish
       </Button>
     </div>
+  );
+}
+
+function RestoreSubcategoryAction({ subcategory, activeCategoryIds, onOptimistic, onError }: { subcategory: Subcategory, activeCategoryIds: string[], onOptimistic?: () => void, onError?: (err: string | null) => void }) {
+  const [isPending, startTransition] = useTransition();
+
+  const handleRestore = () => {
+    if (!activeCategoryIds.includes(subcategory.category_id as string)) {
+      onError?.('Restore the parent category first.');
+      return;
+    }
+    startTransition(async () => {
+      onOptimistic?.();
+      const fd = new FormData();
+      fd.append('id', subcategory.id as string);
+      const res = await restoreMenuSubcategory(null, fd);
+      if (!res.success) {
+        onError?.(res.error);
+      }
+    });
+  };
+
+  return (
+    <Button variant="outline" size="sm" onClick={handleRestore} disabled={isPending} className="h-6 text-[10px] font-bold disabled:opacity-50 px-2">
+      Restore
+    </Button>
   );
 }
 
@@ -229,7 +298,7 @@ function BulkRestoreCategoriesAction({ selectedIds, onClear, onOptimistic, onErr
   );
 }
 
-export function MenuManager({ categories, items, currency }: { categories: Category[], items: Item[], currency: string }) {
+export function MenuManager({ categories, subcategories = [], items, currency }: { categories: Category[], subcategories?: Subcategory[], items: Item[], currency: string }) {
   const [activeSection, setActiveSection] = useState<'DISHES' | 'CATEGORIES' | 'ARCHIVED'>('DISHES');
   const [globalError, setGlobalError] = useState<string | null>(null);
 
@@ -237,19 +306,28 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
     state.map(c => c.id === updatedCategory.id ? updatedCategory : c)
   );
 
+  const [optimisticSubcategories, addOptimisticSubcategory] = useOptimistic(subcategories, (state, updatedSubcategory: Subcategory) => 
+    state.map(s => s.id === updatedSubcategory.id ? updatedSubcategory : s)
+  );
+
   const [optimisticItems, addOptimisticItem] = useOptimistic(items, (state, updatedItem: Item) => 
     state.map(i => i.id === updatedItem.id ? updatedItem : i)
   );
   
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [isSubcategoryModalOpen, setIsSubcategoryModalOpen] = useState(false);
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [editingSubcategory, setEditingSubcategory] = useState<Subcategory | null>(null);
+  const [activeCategoryForSub, setActiveCategoryForSub] = useState<Category | null>(null);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
 
   const activeCategories = optimisticCategories.filter(c => c.status === 'ACTIVE');
+  const activeSubcategories = optimisticSubcategories.filter(s => s.status === 'ACTIVE');
   const activeItems = optimisticItems.filter(i => i.status === 'ACTIVE');
   const archivedCategories = optimisticCategories.filter(c => c.status === 'ARCHIVED');
+  const archivedSubcategories = optimisticSubcategories.filter(s => s.status === 'ARCHIVED');
   const archivedItems = optimisticItems.filter(i => i.status === 'ARCHIVED');
 
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -265,6 +343,8 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
+  const [filterSubcategory, setFilterSubcategory] = useState<string>('ALL');
+  const [filterDishType, setFilterDishType] = useState<string>('ALL');
   const [filterAvailability, setFilterAvailability] = useState<'ALL' | 'AVAILABLE' | 'UNAVAILABLE'>('ALL');
   
   const [showFutureFilters, setShowFutureFilters] = useState(false);
@@ -272,6 +352,8 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
   const filteredItems = useMemo(() => {
     return activeItems.filter(item => {
       if (filterCategory !== 'ALL' && item.category_id !== filterCategory) return false;
+      if (filterSubcategory !== 'ALL' && item.subcategory_id !== filterSubcategory) return false;
+      if (filterDishType !== 'ALL' && item.dish_type !== filterDishType) return false;
       if (filterAvailability === 'AVAILABLE' && !item.is_available) return false;
       if (filterAvailability === 'UNAVAILABLE' && item.is_available) return false;
       
@@ -281,7 +363,7 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
       }
       return true;
     });
-  }, [activeItems, filterCategory, filterAvailability, searchQuery]);
+  }, [activeItems, filterCategory, filterSubcategory, filterDishType, filterAvailability, searchQuery]);
 
   const openAddCategory = () => {
     setEditingCategory(null);
@@ -291,6 +373,18 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
   const openEditCategory = (c: Category) => {
     setEditingCategory(c);
     setIsCategoryModalOpen(true);
+  };
+
+  const openAddSubcategory = (c: Category) => {
+    setActiveCategoryForSub(c);
+    setEditingSubcategory(null);
+    setIsSubcategoryModalOpen(true);
+  };
+
+  const openEditSubcategory = (c: Category, s: Subcategory) => {
+    setActiveCategoryForSub(c);
+    setEditingSubcategory(s);
+    setIsSubcategoryModalOpen(true);
   };
 
   const openAddItem = () => {
@@ -306,6 +400,8 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
   const clearFilters = () => {
     setSearchQuery('');
     setFilterCategory('ALL');
+    setFilterSubcategory('ALL');
+    setFilterDishType('ALL');
     setFilterAvailability('ALL');
   };
 
@@ -315,6 +411,37 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
     const cat = activeCategories.find(c => c.id === id) || archivedCategories.find(c => c.id === id);
     return cat ? (cat.name as string) : 'Uncategorized';
   };
+
+  const getSubcategoryName = (id: string | unknown) => {
+    if (!id) return '';
+    const sub = activeSubcategories.find(s => s.id === id) || archivedSubcategories.find(s => s.id === id);
+    return sub ? (sub.name as string) : '';
+  };
+
+  const formatDishType = (type: string | unknown) => {
+    if (!type) return '';
+    const map: Record<string, string> = { VEG: 'Veg', NON_VEG: 'Non-Veg', VEGAN: 'Vegan', EGG: 'Egg', SEAFOOD: 'Seafood', GENERAL: 'General' };
+    return map[type as string] || (type as string).replace('_', '-');
+  };
+
+  const topDishTypeData = useMemo(() => {
+    const types = activeItems.filter(i => i.dish_type).map(i => i.dish_type as string);
+    if (types.length === 0) return null;
+    const counts = types.reduce((acc, type) => {
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    let topType = '';
+    let max = 0;
+    for (const [type, count] of Object.entries(counts)) {
+      if (count > max) {
+        max = count;
+        topType = type;
+      }
+    }
+    return { type: topType, count: max };
+  }, [activeItems]);
 
   const activeCategoryIds = activeCategories.map(c => c.id as string);
 
@@ -482,15 +609,19 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
                <p className="text-muted-foreground text-[10px] sm:text-xs uppercase tracking-wider font-bold mb-1">Categories</p>
                <p className="text-xl sm:text-2xl font-bold font-heading">{activeCategories.length}</p>
             </div>
-            <div className="bg-card border border-border p-4 rounded-xl shadow-sm opacity-80">
-               <p className="text-muted-foreground text-[10px] sm:text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">Top Dish Type <span className="text-[9px] bg-muted px-1.5 rounded-sm normal-case font-bold hidden sm:inline-block">Phase 7B</span></p>
-               <p className="text-sm font-medium text-muted-foreground mt-1.5">Coming later</p>
+            <div className="bg-card border border-border p-4 rounded-xl shadow-sm">
+               <p className="text-muted-foreground text-[10px] sm:text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">Top Dish Type</p>
+               {topDishTypeData ? (
+                 <p className="text-xl sm:text-2xl font-bold font-heading">{formatDishType(topDishTypeData.type)} <span className="text-sm font-medium text-muted-foreground ml-1">({topDishTypeData.count})</span></p>
+               ) : (
+                 <p className="text-sm font-medium text-muted-foreground mt-1.5">Not set yet</p>
+               )}
             </div>
           </div>
 
           {/* Filter Toolbar */}
           <div className="bg-card border border-border p-4 rounded-xl shadow-sm flex flex-col xl:flex-row gap-4 items-start xl:items-center justify-between">
-            <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3 w-full xl:w-auto">
+            <div className="flex flex-col items-start gap-4 w-full xl:w-auto">
               <div className="relative w-full sm:w-64 shrink-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input 
@@ -501,11 +632,14 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
                   className="w-full h-9 pl-9 pr-4 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 font-medium"
                 />
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <Filter className="w-4 h-4 text-muted-foreground hidden sm:block" />
+              <div className="grid grid-cols-1 min-[430px]:grid-cols-2 sm:flex sm:flex-row sm:flex-wrap items-center gap-2 w-full">
+                <Filter className="w-4 h-4 text-muted-foreground hidden sm:block shrink-0" />
                 <select 
                   value={filterCategory}
-                  onChange={(e) => setFilterCategory(e.target.value)}
+                  onChange={(e) => {
+                    setFilterCategory(e.target.value);
+                    setFilterSubcategory('ALL'); // Reset subcategory when category changes
+                  }}
                   className="w-full sm:w-auto h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 font-medium"
                 >
                   <option value="ALL">All Categories</option>
@@ -513,6 +647,33 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
                     <option key={c.id as string} value={c.id as string}>{c.name as string}</option>
                   ))}
                 </select>
+                
+                {filterCategory !== 'ALL' && activeSubcategories.filter(s => s.category_id === filterCategory).length > 0 && (
+                  <select 
+                    value={filterSubcategory}
+                    onChange={(e) => setFilterSubcategory(e.target.value)}
+                    className="w-full sm:w-auto h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 font-medium"
+                  >
+                    <option value="ALL">All Subcategories</option>
+                    {activeSubcategories.filter(s => s.category_id === filterCategory).map(s => (
+                      <option key={s.id as string} value={s.id as string}>{s.name as string}</option>
+                    ))}
+                  </select>
+                )}
+
+                <select 
+                  value={filterDishType}
+                  onChange={(e) => setFilterDishType(e.target.value)}
+                  className="w-full sm:w-auto h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 font-medium"
+                >
+                  <option value="ALL">All Types</option>
+                  <option value="VEG">Veg</option>
+                  <option value="NON_VEG">Non-Veg</option>
+                  <option value="VEGAN">Vegan</option>
+                  <option value="EGG">Egg</option>
+                  <option value="SEAFOOD">Seafood</option>
+                </select>
+
                 <select 
                   value={filterAvailability}
                   onChange={(e) => setFilterAvailability(e.target.value as 'ALL' | 'AVAILABLE' | 'UNAVAILABLE')}
@@ -578,9 +739,26 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
                      <div className="flex-1">
                        <h4 className="font-bold text-foreground leading-tight line-clamp-2">{item.name as string}</h4>
                        <span className="text-sm font-bold text-foreground mt-1 block">{currency} {(item.price as number).toFixed(2)}</span>
-                       <span className="inline-flex items-center px-2 py-0.5 mt-2 rounded-md bg-muted text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                          {getCategoryName(item.category_id)}
-                       </span>
+                       <div className="flex flex-wrap gap-2 mt-2">
+                         <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold uppercase tracking-wider text-muted-foreground border border-border/50">
+                            {getCategoryName(item.category_id)} {item.subcategory_id ? `> ${getSubcategoryName(item.subcategory_id)}` : ''}
+                         </span>
+                         {(item.dish_type as string) && (item.dish_type as string) !== 'GENERAL' && (
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider border border-primary/20">
+                              {formatDishType(item.dish_type as string)}
+                           </span>
+                         )}
+                         {Boolean(item.is_recommended) && (
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 text-[10px] font-bold uppercase tracking-wider border border-amber-500/20">
+                              Recommended
+                           </span>
+                         )}
+                         {Boolean(item.preparation_time_minutes) && (
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold text-muted-foreground border border-border/50">
+                              {item.preparation_time_minutes as number}m
+                           </span>
+                         )}
+                       </div>
                      </div>
                    </div>
                    <div className="flex items-center justify-between mt-auto pt-4 border-t border-border">
@@ -638,9 +816,28 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
                      </td>
                      <td className="px-5 py-4 font-medium text-foreground">{currency} {(item.price as number).toFixed(2)}</td>
                      <td className="px-5 py-4 text-muted-foreground">
-                        <span className="inline-flex items-center px-2 py-1 rounded-md bg-muted text-xs font-medium text-foreground">
-                           {getCategoryName(item.category_id)}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold uppercase tracking-wider text-muted-foreground border border-border/50">
+                             {getCategoryName(item.category_id)} {item.subcategory_id ? `> ${getSubcategoryName(item.subcategory_id)}` : ''}
+                          </span>
+                          <div className="flex gap-1 flex-wrap">
+                            {(item.dish_type as string) && (item.dish_type as string) !== 'GENERAL' && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">
+                                 {formatDishType(item.dish_type as string)}
+                              </span>
+                            )}
+                            {Boolean(item.is_recommended) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                                 Rec
+                              </span>
+                            )}
+                            {Boolean(item.preparation_time_minutes) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-muted text-muted-foreground border border-border/50">
+                                 {item.preparation_time_minutes as number}m
+                              </span>
+                            )}
+                          </div>
+                        </div>
                      </td>
                      <td className="px-5 py-4">
                         {!item.is_available ? (
@@ -710,6 +907,32 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
                        {(category.description as string) && (
                          <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{category.description as string}</p>
                        )}
+                       <div className="mt-4 pt-4 border-t border-border/50">
+                          <div className="flex items-center justify-between mb-2">
+                             <h5 className="text-xs font-bold text-foreground">Subcategories</h5>
+                             <Button variant="ghost" size="sm" onClick={() => openAddSubcategory(category)} className="h-6 px-2 text-[10px] font-bold text-primary hover:bg-primary/10">
+                               <Plus className="w-3 h-3 mr-1" /> Add Subcategories
+                             </Button>
+                          </div>
+                          
+                          {activeSubcategories.filter(s => s.category_id === category.id).length > 0 ? (
+                            <div className="space-y-1.5">
+                              {activeSubcategories.filter(s => s.category_id === category.id).map(sub => (
+                                <div key={sub.id as string} className="flex items-center justify-between bg-background border border-border px-2 py-1.5 rounded-md hover:border-primary/30 transition-colors group/sub">
+                                  <span className="text-xs font-medium text-foreground line-clamp-1 flex-1">{sub.name as string}</span>
+                                  <div className="flex items-center opacity-100 sm:opacity-0 sm:group-hover/sub:opacity-100 transition-opacity shrink-0">
+                                     <Button variant="ghost" size="icon" onClick={() => openEditSubcategory(category, sub)} className="h-6 w-6 text-muted-foreground hover:text-foreground">
+                                        <Edit2 className="w-3 h-3" />
+                                     </Button>
+                                     <ArchiveSubcategoryAction subcategory={sub} activeItemsCount={activeItems.filter(i => i.subcategory_id === sub.id).length} onOptimistic={() => addOptimisticSubcategory({ ...sub, status: 'ARCHIVED' })} onError={setGlobalError} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground/60 italic">No subcategories yet. Add options like Steam, Jhol, Fried, or Cold Drinks.</p>
+                          )}
+                       </div>
                      </div>
                      <div className="flex items-center justify-between mt-4 pt-4 border-t border-border/50">
                         <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => openEditCategory(category)}>Edit</Button>
@@ -756,7 +979,7 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
                        </div>
                      </div>
                      <div className="flex items-center justify-end mt-auto pt-4 border-t border-border">
-                       <RestoreItemAction item={item} activeCategoryIds={activeCategories.map((c: any) => c.id)} onOptimistic={() => addOptimisticItem({ ...item, status: 'ACTIVE' })} onError={setGlobalError} />
+                       <RestoreItemAction item={item} activeCategoryIds={activeCategories.map((c: Category) => c.id as string)} onOptimistic={() => addOptimisticItem({ ...item, status: 'ACTIVE' })} onError={setGlobalError} />
                      </div>
                   </div>
                 ))}
@@ -821,13 +1044,26 @@ export function MenuManager({ categories, items, currency }: { categories: Categ
         />
       )}
 
+      {isSubcategoryModalOpen && activeCategoryForSub && (
+        <SubcategoryModal
+          isOpen={isSubcategoryModalOpen}
+          onClose={() => setIsSubcategoryModalOpen(false)}
+          category={activeCategoryForSub}
+          subcategory={editingSubcategory}
+          onOptimistic={(s) => addOptimisticSubcategory(s)}
+        />
+      )}
+
       {isItemModalOpen && (
         <ItemModal 
           isOpen={isItemModalOpen} 
           onClose={() => setIsItemModalOpen(false)} 
           item={editingItem}
           categories={activeCategories}
+          subcategories={activeSubcategories}
           currency={currency}
+          onOptimistic={addOptimisticItem}
+          onError={setGlobalError}
         />
       )}
     </div>
