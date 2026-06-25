@@ -402,7 +402,15 @@ export function MenuManager({
     state.map(s => s.id === updatedSubcategory.id ? updatedSubcategory : s)
   );
 
-  const [optimisticItems, addOptimisticItem] = useOptimistic(items, (state, updatedItem: Item) => 
+  const [localItems, setLocalItems] = useState<Item[]>(items as Item[]);
+  const [prevItemsProp, setPrevItemsProp] = useState<unknown[]>(items);
+
+  if (items !== prevItemsProp) {
+    setPrevItemsProp(items);
+    setLocalItems(items as Item[]);
+  }
+
+  const [optimisticItems, addOptimisticItem] = useOptimistic(localItems, (state, updatedItem: Item) => 
     state.map(i => i.id === updatedItem.id ? updatedItem : i)
   );
 
@@ -940,7 +948,11 @@ export function MenuManager({
                      )}
                    </div>
                    <div className="flex items-center justify-between mt-auto pt-4 border-t border-border">
-                     <ToggleAvailabilityButton item={item} />
+                     <ToggleAvailabilityButton 
+                        item={item} 
+                        onOptimistic={(status) => addOptimisticItem({ ...item, is_available: status })}
+                        onSuccess={(status) => setLocalItems(prev => prev.map(i => i.id === item.id ? { ...i, is_available: status } : i))}
+                      />
                      <div className="flex items-center gap-1">
                        <Button variant="ghost" size="icon" onClick={() => openEditItem(item)} className="h-8 w-8 text-muted-foreground hover:text-foreground">
                          <Edit2 className="w-4 h-4" />
@@ -1034,7 +1046,11 @@ export function MenuManager({
                      </td>
                      <td className="px-5 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                          <ToggleAvailabilityButton item={item} />
+                          <ToggleAvailabilityButton 
+                        item={item} 
+                        onOptimistic={(status) => addOptimisticItem({ ...item, is_available: status })}
+                        onSuccess={(status) => setLocalItems(prev => prev.map(i => i.id === item.id ? { ...i, is_available: status } : i))}
+                      />
                           <Button variant="ghost" size="sm" onClick={() => openEditItem(item)} className="h-8 px-2 text-muted-foreground hover:text-foreground">
                             Edit
                           </Button>

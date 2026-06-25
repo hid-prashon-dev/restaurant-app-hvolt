@@ -703,39 +703,17 @@ export async function createMenuItem(prevState: any, formData: FormData) {
 
     const adminSupabase = createAdminClient();
     
-    // Verify category belongs to tenant
-    const { data: cat } = await adminSupabase
-      .from('menu_categories')
-      .select('id')
-      .eq('id', category_id)
-      .eq('tenant_id', tenant_id)
-      .single();
+    if (process.env.NODE_ENV === 'development') console.time('[menu:create] batch validation');
+    const [catResult, subResult, existingResult] = await Promise.all([
+      adminSupabase.from('menu_categories').select('id').eq('id', category_id).eq('tenant_id', tenant_id).single(),
+      subcategory_id ? adminSupabase.from('menu_subcategories').select('id').eq('id', subcategory_id).eq('category_id', category_id).eq('tenant_id', tenant_id).single() : Promise.resolve({ data: null }),
+      adminSupabase.from('menu_items').select('id').eq('category_id', category_id).ilike('name', name).eq('status', 'ACTIVE').maybeSingle()
+    ]);
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:create] batch validation');
       
-    if (!cat) return { success: false, error: 'Invalid category.' };
-    
-    if (subcategory_id) {
-      const { data: sub } = await adminSupabase
-        .from('menu_subcategories')
-        .select('id')
-        .eq('id', subcategory_id)
-        .eq('category_id', category_id)
-        .eq('tenant_id', tenant_id)
-        .single();
-      if (!sub) return { success: false, error: 'Subcategory must belong to the selected category.' };
-    }
-    
-    // Check for duplicate name in category
-    const { data: existing } = await adminSupabase
-      .from('menu_items')
-      .select('id')
-      .eq('category_id', category_id)
-      .ilike('name', name)
-      .eq('status', 'ACTIVE')
-      .maybeSingle();
-      
-    if (existing) {
-      return { success: false, error: 'An active item with this name already exists in this category.' };
-    }
+    if (!catResult.data) return { success: false, error: 'Invalid category.' };
+    if (subcategory_id && !subResult.data) return { success: false, error: 'Subcategory must belong to the selected category.' };
+    if (existingResult.data) return { success: false, error: 'An active item with this name already exists in this category.' };
 
     const variantsRaw = formData.get('variants')?.toString();
     let variants: any[] = [];
@@ -782,6 +760,7 @@ export async function createMenuItem(prevState: any, formData: FormData) {
       return { success: false, error: 'Maximum 20 modifier groups allowed per dish.' };
     }
 
+    if (process.env.NODE_ENV === 'development') console.time('[menu:create] item insert');
     const { data: newItem, error } = await adminSupabase.from('menu_items').insert({
       tenant_id,
       category_id,
@@ -797,9 +776,11 @@ export async function createMenuItem(prevState: any, formData: FormData) {
       sort_order,
       is_available
     }).select('id').single();
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:create] item insert');
 
     if (error) throw error;
     
+    const insertPromises = [];
     if (variants.length > 0) {
       const variantsToInsert = variants.map((v, index) => ({
         tenant_id,
@@ -810,10 +791,7 @@ export async function createMenuItem(prevState: any, formData: FormData) {
         sort_order: index,
         status: v.status || 'ACTIVE'
       }));
-      const { error: varError } = await adminSupabase.from('menu_item_variants').insert(variantsToInsert);
-      if (varError) {
-        console.error('Failed to insert variants:', varError);
-      }
+      insertPromises.push(adminSupabase.from('menu_item_variants').insert(variantsToInsert));
     }
 
     if (modifierGroups.length > 0) {
@@ -824,11 +802,21 @@ export async function createMenuItem(prevState: any, formData: FormData) {
         sort_order: index,
         status: 'ACTIVE'
       }));
-      const { error: attachError } = await adminSupabase.from('menu_item_modifier_groups').insert(groupAttachments);
-      if (attachError) console.error('Failed to attach modifier groups:', attachError);
+      insertPromises.push(adminSupabase.from('menu_item_modifier_groups').insert(groupAttachments));
     }
     
+    if (insertPromises.length > 0) {
+      if (process.env.NODE_ENV === 'development') console.time('[menu:create] variants and modifiers sync');
+      const results = await Promise.all(insertPromises);
+      for (const res of results) {
+        if (res.error) console.error('Failed to insert variant/modifier:', res.error);
+      }
+      if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:create] variants and modifiers sync');
+    }
+    
+    if (process.env.NODE_ENV === 'development') console.time('[menu:create] revalidate');
     revalidatePath('/dashboard/admin/menu');
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:create] revalidate');
     return { success: true, error: null };
   } catch (err: any) {
     console.error('createMenuItem error:', err);
@@ -878,40 +866,18 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
 
     const adminSupabase = createAdminClient();
     
-    // Verify category belongs to tenant
-    const { data: cat } = await adminSupabase
-      .from('menu_categories')
-      .select('id')
-      .eq('id', category_id)
-      .eq('tenant_id', tenant_id)
-      .single();
-      
-    if (!cat) return { success: false, error: 'Invalid category.' };
-    
-    if (subcategory_id) {
-      const { data: sub } = await adminSupabase
-        .from('menu_subcategories')
-        .select('id')
-        .eq('id', subcategory_id)
-        .eq('category_id', category_id)
-        .eq('tenant_id', tenant_id)
-        .single();
-      if (!sub) return { success: false, error: 'Subcategory must belong to the selected category.' };
-    }
-    
-    // Check duplicate
-    const { data: existing } = await adminSupabase
-      .from('menu_items')
-      .select('id')
-      .eq('category_id', category_id)
-      .ilike('name', name)
-      .eq('status', 'ACTIVE')
-      .neq('id', id)
-      .maybeSingle();
-      
-    if (existing) {
-      return { success: false, error: 'An active item with this name already exists in this category.' };
-    }
+    if (process.env.NODE_ENV === 'development') console.time('[menu:update] batch validation');
+    // Batch validation queries
+    const [catResult, subResult, existingResult] = await Promise.all([
+      adminSupabase.from('menu_categories').select('id').eq('id', category_id).eq('tenant_id', tenant_id).single(),
+      subcategory_id ? adminSupabase.from('menu_subcategories').select('id').eq('id', subcategory_id).eq('category_id', category_id).eq('tenant_id', tenant_id).single() : Promise.resolve({ data: null }),
+      adminSupabase.from('menu_items').select('id').eq('category_id', category_id).ilike('name', name).eq('status', 'ACTIVE').neq('id', id).maybeSingle()
+    ]);
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:update] batch validation');
+
+    if (!catResult.data) return { success: false, error: 'Invalid category.' };
+    if (subcategory_id && !subResult.data) return { success: false, error: 'Subcategory must belong to the selected category.' };
+    if (existingResult.data) return { success: false, error: 'An active item with this name already exists in this category.' };
 
     const variantsRaw = formData.get('variants')?.toString();
     let variants: any[] = [];
@@ -955,6 +921,7 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
     }
     if (modifierGroups.length > 20) return { success: false, error: 'Maximum 20 modifier groups allowed per dish.' };
 
+    if (process.env.NODE_ENV === 'development') console.time('[menu:update] item update');
     const { error } = await adminSupabase
       .from('menu_items')
       .update({
@@ -975,10 +942,12 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       .eq('tenant_id', tenant_id)
       .select('id')
       .single();
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:update] item update');
 
     if (error) throw error;
     
     if (variants.length > 0) {
+      if (process.env.NODE_ENV === 'development') console.time('[menu:update] variants sync');
       const variantsToUpdate = variants
         .filter(v => v.id && !v.id.startsWith('temp_'))
         .map((v, index) => ({
@@ -1004,22 +973,18 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
           status: v.status || 'ACTIVE'
         }));
 
-      if (variantsToUpdate.length > 0) {
-        const { error: updateError } = await adminSupabase.from('menu_item_variants').upsert(variantsToUpdate);
-        if (updateError) {
-          console.error('Failed to update variants:', updateError);
-        }
+      const variantPromises = [];
+      if (variantsToUpdate.length > 0) variantPromises.push(adminSupabase.from('menu_item_variants').upsert(variantsToUpdate));
+      if (variantsToInsert.length > 0) variantPromises.push(adminSupabase.from('menu_item_variants').insert(variantsToInsert));
+      
+      if (variantPromises.length > 0) {
+        await Promise.all(variantPromises);
       }
-
-      if (variantsToInsert.length > 0) {
-        const { error: insertError } = await adminSupabase.from('menu_item_variants').insert(variantsToInsert);
-        if (insertError) {
-          console.error('Failed to insert variants:', insertError);
-        }
-      }
+      if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:update] variants sync');
     }
     
     // Update Modifier Groups Attachment
+    if (process.env.NODE_ENV === 'development') console.time('[menu:update] modifier attachments sync');
     const { data: existingAttachments } = await adminSupabase
       .from('menu_item_modifier_groups')
       .select('group_id, status')
@@ -1029,12 +994,14 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
     const existingActive = (existingAttachments || []).filter(a => a.status === 'ACTIVE').map(a => a.group_id);
     
     const toArchive = existingActive.filter(gId => !modifierGroups.includes(gId));
+    
+    const attachmentPromises = [];
     if (toArchive.length > 0) {
-      await adminSupabase.from('menu_item_modifier_groups')
+      attachmentPromises.push(adminSupabase.from('menu_item_modifier_groups')
         .update({ status: 'ARCHIVED' })
         .eq('item_id', id)
         .eq('tenant_id', tenant_id)
-        .in('group_id', toArchive);
+        .in('group_id', toArchive));
     }
     
     if (modifierGroups.length > 0) {
@@ -1059,9 +1026,13 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       const toUpdate = attachmentsToUpsert.filter(a => a.id);
       const toInsert = attachmentsToUpsert.filter(a => !a.id).map(({ id, ...rest }) => rest);
       
-      if (toUpdate.length > 0) await adminSupabase.from('menu_item_modifier_groups').upsert(toUpdate);
-      if (toInsert.length > 0) await adminSupabase.from('menu_item_modifier_groups').insert(toInsert);
+      if (toUpdate.length > 0) attachmentPromises.push(adminSupabase.from('menu_item_modifier_groups').upsert(toUpdate));
+      if (toInsert.length > 0) attachmentPromises.push(adminSupabase.from('menu_item_modifier_groups').insert(toInsert));
     }
+    if (attachmentPromises.length > 0) {
+      await Promise.all(attachmentPromises);
+    }
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:update] modifier attachments sync');
 
     revalidatePath('/dashboard/admin/menu');
     return { success: true, error: null };
@@ -1164,7 +1135,11 @@ export async function restoreMenuItem(prevState: any, formData: FormData) {
 
 export async function toggleMenuItemAvailability(prevState: any, formData: FormData) {
   try {
+    if (process.env.NODE_ENV === 'development') console.time('[menu:toggle] all');
+    if (process.env.NODE_ENV === 'development') console.time('[menu:toggle] actor verify');
     const tenant_id = await verifyAdminAndGetTenant();
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:toggle] actor verify');
+    
     const id = formData.get('id')?.toString();
     const is_available = formData.get('is_available') === 'true'; // string to boolean
     
@@ -1172,6 +1147,7 @@ export async function toggleMenuItemAvailability(prevState: any, formData: FormD
 
     const adminSupabase = createAdminClient();
 
+    if (process.env.NODE_ENV === 'development') console.time('[menu:toggle] item update');
     const { error } = await adminSupabase
       .from('menu_items')
       .update({ is_available })
@@ -1179,11 +1155,14 @@ export async function toggleMenuItemAvailability(prevState: any, formData: FormD
       .eq('tenant_id', tenant_id)
       .select('id')
       .single();
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:toggle] item update');
 
     if (error) throw error;
     
-    revalidatePath('/dashboard/admin/menu');
-    return { success: true, error: null };
+    // Omitted revalidatePath to speed up optimistic UI response for short toggle action
+    
+    if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:toggle] all');
+    return { success: true, error: null, item_id: id, is_available };
   } catch (err: any) {
     console.error('toggleMenuItemAvailability error:', err);
     return { success: false, error: 'Something went wrong. Please try again.' };

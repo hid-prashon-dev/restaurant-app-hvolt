@@ -51,55 +51,25 @@ export default async function AdminMenuPage() {
     );
   }
 
-  // Fetch categories, subcategories, and items
-  const { data: categories } = await supabase
-    .from('menu_categories')
-    .select('*')
-    .eq('tenant_id', profile.tenant_id)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  const { data: subcategories } = await supabase
-    .from('menu_subcategories')
-    .select('*')
-    .eq('tenant_id', profile.tenant_id)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  const { data: items } = await supabase
-    .from('menu_items')
-    .select('*')
-    .eq('tenant_id', profile.tenant_id)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  const { data: variants } = await supabase
-    .from('menu_item_variants')
-    .select('*')
-    .eq('tenant_id', profile.tenant_id)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  const { data: modifierGroups } = await supabase
-    .from('menu_modifier_groups')
-    .select('*')
-    .eq('tenant_id', profile.tenant_id)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  const { data: modifiers } = await supabase
-    .from('menu_modifiers')
-    .select('*')
-    .eq('tenant_id', profile.tenant_id)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  const { data: itemModifierGroups } = await supabase
-    .from('menu_item_modifier_groups')
-    .select('*')
-    .eq('tenant_id', profile.tenant_id)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
+  if (process.env.NODE_ENV === 'development') console.time('[menu:fetch] all_data');
+  const [
+    { data: categories },
+    { data: subcategories },
+    { data: items },
+    { data: variants },
+    { data: modifierGroups },
+    { data: modifiers },
+    { data: itemModifierGroups }
+  ] = await Promise.all([
+    supabase.from('menu_categories').select('*').eq('tenant_id', profile.tenant_id).order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('menu_subcategories').select('*').eq('tenant_id', profile.tenant_id).order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('menu_items').select('*').eq('tenant_id', profile.tenant_id).order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('menu_item_variants').select('*').eq('tenant_id', profile.tenant_id).order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('menu_modifier_groups').select('*').eq('tenant_id', profile.tenant_id).order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('menu_modifiers').select('*').eq('tenant_id', profile.tenant_id).order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('menu_item_modifier_groups').select('*').eq('tenant_id', profile.tenant_id).order('sort_order', { ascending: true }).order('created_at', { ascending: true })
+  ]);
+  if (process.env.NODE_ENV === 'development') console.timeEnd('[menu:fetch] all_data');
 
   return (
     <div className="flex flex-col h-full min-h-[calc(100vh-4rem)]">
