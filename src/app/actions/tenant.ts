@@ -153,3 +153,152 @@ export async function assignTenantAdmin(formData: FormData) {
     return { success: false, message: 'Something went wrong. Please try again.' };
   }
 }
+
+export async function updateTenantSettings(prevState: any, formData: FormData) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Unauthorized' };
+
+    const { data: profile } = await supabase.from('profiles').select('role, tenant_id').eq('id', user.id).single();
+    if (profile?.role !== 'ADMIN' || !profile.tenant_id) {
+      return { success: false, error: 'Forbidden: Only Tenant Admins can edit business settings.' };
+    }
+
+    const timezone = formData.get('timezone') as string;
+    const currency = formData.get('currency') as string;
+    const country = formData.get('country') as string;
+    const contact_email = formData.get('contact_email') as string;
+    const dial_code = formData.get('dial_code') as string || '';
+    const phone_number = formData.get('phone_number') as string || '';
+    const address_line = formData.get('address_line') as string;
+    const city = formData.get('city') as string;
+    const region = formData.get('region') as string;
+    const postal_code = formData.get('postal_code') as string;
+
+    // Validation
+    const allowedTimezones = ['UTC', 'Asia/Kathmandu', 'Asia/Kolkata', 'Europe/Lisbon', 'America/New_York', 'Europe/London', 'Australia/Sydney'];
+    if (timezone && !allowedTimezones.includes(timezone)) return { success: false, error: 'Invalid timezone selected.' };
+
+    const allowedCurrencies = ['USD', 'NPR', 'INR', 'EUR', 'GBP', 'AUD'];
+    if (currency && !allowedCurrencies.includes(currency)) return { success: false, error: 'Invalid currency selected.' };
+
+    const allowedCountries = ['Nepal', 'India', 'Portugal', 'United States', 'United Kingdom', 'Australia'];
+    if (country && !allowedCountries.includes(country)) return { success: false, error: 'Invalid country selected.' };
+
+    if (contact_email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(contact_email)) return { success: false, error: 'Invalid email format.' };
+    }
+
+    let full_phone = '';
+    if (phone_number) {
+      const cleanPhone = phone_number.replace(/\D/g, '');
+      
+      // Country-aware phone validation
+      if (country === 'Nepal' && cleanPhone.length !== 10) {
+        return { success: false, error: 'Enter a valid 10-digit Nepal phone number.' };
+      }
+      if (country === 'India' && cleanPhone.length !== 10) {
+        return { success: false, error: 'Enter a valid 10-digit India phone number.' };
+      }
+      if (country === 'Portugal' && cleanPhone.length !== 9) {
+        return { success: false, error: 'Enter a valid 9-digit Portugal phone number.' };
+      }
+      if (country === 'United States' && cleanPhone.length !== 10) {
+        return { success: false, error: 'Enter a valid 10-digit United States phone number.' };
+      }
+      if (country === 'United Kingdom' && (cleanPhone.length < 10 || cleanPhone.length > 11)) {
+        return { success: false, error: 'Enter a valid 10 or 11-digit United Kingdom phone number.' };
+      }
+      if (country === 'Australia' && cleanPhone.length !== 9) {
+        return { success: false, error: 'Enter a valid 9-digit Australia phone number.' };
+      }
+      
+      if (cleanPhone.length < 5) return { success: false, error: 'Phone number is too short.' };
+      
+      full_phone = dial_code ? `${dial_code}${cleanPhone}` : cleanPhone;
+    }
+
+    const { createAdminClient } = await import('@/utils/supabase/admin');
+    const adminSupabase = createAdminClient();
+
+    const { data, error } = await adminSupabase
+      .from('tenant_settings')
+      .update({
+        timezone: timezone || 'UTC',
+        currency: currency || 'USD',
+        country,
+        contact_email,
+        phone: full_phone || null,
+        address_line,
+        city,
+        region,
+        postal_code
+      })
+      .eq('tenant_id', profile.tenant_id)
+      .select('tenant_id')
+      .single();
+
+    if (error || !data) {
+      console.error(error);
+      return { success: false, error: 'Failed to update business settings. Record not found or error occurred.' };
+    }
+
+    revalidatePath('/dashboard/admin/business');
+    revalidatePath('/dashboard/admin');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('Unexpected error during updateTenantSettings:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function updateTenantModules(prevState: any, formData: FormData) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Unauthorized' };
+
+    const { data: profile } = await supabase.from('profiles').select('role, tenant_id').eq('id', user.id).single();
+    if (profile?.role !== 'ADMIN' || !profile.tenant_id) {
+      return { success: false, error: 'Forbidden: Only Tenant Admins can edit modules.' };
+    }
+
+    // Build JSON payload matching exactly the keys in default config
+    const modules_enabled = {
+      restaurant: formData.get('restaurant') === 'on',
+      hotel: formData.get('hotel') === 'on',
+      qr_ordering: formData.get('qr_ordering') === 'on',
+      pos: formData.get('pos') === 'on',
+      kitchen_display: formData.get('kitchen_display') === 'on',
+      rooms: formData.get('rooms') === 'on',
+      housekeeping: formData.get('housekeeping') === 'on',
+      room_service: formData.get('room_service') === 'on',
+      inventory: formData.get('inventory') === 'on',
+      reports: formData.get('reports') === 'on'
+    };
+
+    const { createAdminClient } = await import('@/utils/supabase/admin');
+    const adminSupabase = createAdminClient();
+
+    const { data, error } = await adminSupabase
+      .from('tenant_settings')
+      .update({ modules_enabled: modules_enabled as any })
+      .eq('tenant_id', profile.tenant_id)
+      .select('tenant_id')
+      .single();
+
+    if (error || !data) {
+      console.error(error);
+      return { success: false, error: 'Failed to update modules. Record not found or error occurred.' };
+    }
+
+    revalidatePath('/dashboard/admin/modules');
+    revalidatePath('/dashboard/admin');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('Unexpected error during updateTenantModules:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}

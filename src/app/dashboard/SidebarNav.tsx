@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, UtensilsCrossed, Hotel, Settings, Building2, Users } from "lucide-react";
+import { LayoutDashboard, UtensilsCrossed, Hotel, Settings, Building2, Users, MapPin, Grid } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function SidebarNav({ role }: { role: string | null | undefined }) {
@@ -12,6 +12,8 @@ export function SidebarNav({ role }: { role: string | null | undefined }) {
   const isMasterTenantsActive = pathname.startsWith('/dashboard/master/tenants');
   const isSuperTenantsActive = pathname.startsWith('/dashboard/superadmin/tenants');
   const isAdminBusinessActive = pathname.startsWith('/dashboard/admin/business');
+  const isAdminModulesActive = pathname.startsWith('/dashboard/admin/modules');
+  const isAdminLocationsActive = pathname.startsWith('/dashboard/admin/locations');
   const isAdminTeamActive = pathname.startsWith('/dashboard/admin/team');
 
   return (
@@ -102,6 +104,30 @@ export function SidebarNav({ role }: { role: string | null | undefined }) {
             >
               <Users className="h-4 w-4" />
               Team
+            </Link>
+            <Link
+              href="/dashboard/admin/modules"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isAdminModulesActive
+                  ? "text-primary bg-primary/10 hover:text-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              <Grid className="h-4 w-4" />
+              Modules
+            </Link>
+            <Link
+              href="/dashboard/admin/locations"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isAdminLocationsActive
+                  ? "text-primary bg-primary/10 hover:text-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              <MapPin className="h-4 w-4" />
+              Locations
             </Link>
           </>
         )}
