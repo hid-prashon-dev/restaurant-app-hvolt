@@ -12,10 +12,13 @@ export function AdminAssignmentForm({ tenantId, tenantName, existingAdmin }: { t
   const [state, formAction, isPending] = useActionState(
     async (prevState: any, formData: FormData) => {
       try {
-        await assignTenantAdmin(formData);
+        const result = await assignTenantAdmin(formData);
+        if (!result.success) {
+          return { success: false, error: result.message };
+        }
         return { success: true, error: null };
       } catch (e: any) {
-        return { success: false, error: e.message };
+        return { success: false, error: 'Something went wrong. Please try again.' };
       }
     },
     { success: false, error: null }
