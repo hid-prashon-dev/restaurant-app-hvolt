@@ -162,3 +162,87 @@ export async function archiveServiceLocation(prevState: any, formData: FormData)
     return { success: false, error: 'Something went wrong. Please try again.' };
   }
 }
+
+export async function restoreServiceArea(prevState: any, formData: FormData) {
+  try {
+    const id = formData.get('id') as string;
+    if (!id) return { success: false, error: 'Missing area ID.' };
+
+    const auth = await getAdminProfile();
+    if (!auth) return { success: false, error: 'Forbidden: Admin access required.' };
+
+    const { createAdminClient } = await import('@/utils/supabase/admin');
+    const adminSupabase = createAdminClient();
+
+    const { error } = await adminSupabase
+      .from('service_areas')
+      .update({ status: 'ACTIVE' })
+      .eq('id', id)
+      .eq('tenant_id', auth.profile.tenant_id)
+      .eq('status', 'ARCHIVED');
+
+    if (error) {
+      console.error(error);
+      return { success: false, error: 'Failed to restore area.' };
+    }
+
+    revalidatePath('/dashboard/admin/locations');
+    return { success: true, error: null };
+  } catch (e: any) {
+    console.error('Unexpected error during restoreServiceArea:', e);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function restoreServiceLocation(prevState: any, formData: FormData) {
+  try {
+    const id = formData.get('id') as string;
+    if (!id) return { success: false, error: 'Missing location ID.' };
+
+    const auth = await getAdminProfile();
+    if (!auth) return { success: false, error: 'Forbidden: Admin access required.' };
+
+    const { createAdminClient } = await import('@/utils/supabase/admin');
+    const adminSupabase = createAdminClient();
+
+    // Verify location exists and get area_id
+    const { data: loc } = await adminSupabase
+      .from('service_locations')
+      .select('area_id, status')
+      .eq('id', id)
+      .eq('tenant_id', auth.profile.tenant_id)
+      .single();
+
+    if (!loc) return { success: false, error: 'Location not found.' };
+    if (loc.status === 'ACTIVE') return { success: false, error: 'Location is already active.' };
+
+    // Verify parent area is active
+    const { data: area } = await adminSupabase
+      .from('service_areas')
+      .select('status')
+      .eq('id', loc.area_id)
+      .eq('tenant_id', auth.profile.tenant_id)
+      .single();
+
+    if (!area || area.status !== 'ACTIVE') {
+      return { success: false, error: 'Restore the parent area before restoring this location.' };
+    }
+
+    const { error } = await adminSupabase
+      .from('service_locations')
+      .update({ status: 'ACTIVE' })
+      .eq('id', id)
+      .eq('tenant_id', auth.profile.tenant_id);
+
+    if (error) {
+      console.error(error);
+      return { success: false, error: 'Failed to restore location.' };
+    }
+
+    revalidatePath('/dashboard/admin/locations');
+    return { success: true, error: null };
+  } catch (e: any) {
+    console.error('Unexpected error during restoreServiceLocation:', e);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}

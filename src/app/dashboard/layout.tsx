@@ -4,6 +4,7 @@ import { UserCircle, Bell, LogOut } from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import { logout } from "@/app/login/actions";
 import { SidebarNav } from "./SidebarNav";
+import { MobileSidebar } from "./MobileSidebar";
 
 export default async function DashboardLayout({
   children,
@@ -42,11 +43,12 @@ export default async function DashboardLayout({
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex flex-col md:pl-64 flex-1">
+      <div className="flex flex-col md:pl-64 flex-1 w-full overflow-hidden">
         {/* Persistent Topbar */}
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card px-6 shadow-sm">
-          <div className="flex-1 flex items-center gap-4">
-            <h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card px-4 md:px-6 shadow-sm">
+          <div className="flex-1 flex items-center gap-2 md:gap-4">
+            <MobileSidebar role={role} />
+            <h1 className="text-lg font-semibold text-foreground hidden sm:block">Dashboard</h1>
             <div className="hidden sm:block">
               <span className="inline-flex items-center rounded-full border border-success/20 bg-success/10 px-2.5 py-0.5 text-xs font-semibold text-success">
                 System Operational
