@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useMemo, useTransition, useOptimistic, useEffect, useActionState } from 'react';
-import { createTemplateCategories, archiveMenuCategory, archiveMenuItem, restoreMenuCategory, restoreMenuItem, bulkArchiveMenuCategories, bulkRestoreMenuCategories, archiveMenuSubcategory, restoreMenuSubcategory } from '@/app/actions/menu';
+import { createTemplateCategories, archiveMenuCategory, archiveMenuItem, restoreMenuCategory, restoreMenuItem, bulkArchiveMenuCategories, bulkRestoreMenuCategories, archiveMenuSubcategory, restoreMenuSubcategory, archiveModifierGroup, restoreModifierGroup } from '@/app/actions/menu';
 import { Plus, Archive, Search, Filter, SlidersHorizontal, Edit2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CategoryModal } from './CategoryModal';
 import { ItemModal } from './ItemModal';
 import { ToggleAvailabilityButton } from './ToggleAvailabilityButton';
 import { SubcategoryModal } from './SubcategoryModal';
+import { ModifierGroupModal } from './ModifierGroupModal';
 
 type Category = Record<string, unknown>;
 type Subcategory = Record<string, unknown>;
@@ -231,6 +232,74 @@ function RestoreCategoryAction({ category, onOptimistic, onError }: { category: 
   );
 }
 
+function ArchiveModifierGroupAction({ group, activeItemsCount, onOptimistic, onError }: { group: ModifierGroup, activeItemsCount: number, onOptimistic?: () => void, onError?: (err: string | null) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const handleOpen = () => {
+    if (activeItemsCount > 0) {
+      onError?.(`Cannot archive group "${group.name}" because it is attached to ${activeItemsCount} active dish(es). Remove it from the dishes first.`);
+      return;
+    }
+    setIsOpen(true);
+  };
+
+  const handleConfirm = () => {
+    setIsOpen(false);
+    startTransition(async () => {
+      onOptimistic?.();
+      const fd = new FormData();
+      fd.append('id', group.id as string);
+      const res = await archiveModifierGroup(null, fd);
+      if (!res.success) {
+        onError?.(res.error);
+      }
+    });
+  };
+
+  return (
+    <>
+      <div className="flex flex-col items-end">
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive disabled:opacity-50" 
+          disabled={isPending}
+          onClick={handleOpen}
+        >
+          Archive Group
+        </Button>
+      </div>
+      <ActionConfirmModal isOpen={isOpen} onClose={() => setIsOpen(false)} onConfirm={handleConfirm} title="Archive Modifier Group" message={`Are you sure you want to archive "${group.name}"? This group will be hidden from the active list.`} />
+    </>
+  );
+}
+
+function RestoreModifierGroupAction({ group, onOptimistic, onError }: { group: ModifierGroup, onOptimistic?: () => void, onError?: (err: string | null) => void }) {
+  const [isPending, startTransition] = useTransition();
+
+  const handleRestore = () => {
+    startTransition(async () => {
+      onOptimistic?.();
+      const fd = new FormData();
+      fd.append('id', group.id as string);
+      const res = await restoreModifierGroup(null, fd);
+      if (!res.success) {
+        onError?.(res.error);
+      }
+    });
+  };
+
+  return (
+    <div className="flex flex-col items-end">
+      <Button variant="outline" size="sm" className="h-7 px-3 text-xs font-bold disabled:opacity-50" disabled={isPending} onClick={handleRestore}>
+        Restore Group
+      </Button>
+    </div>
+  );
+}
+
+
 function BulkArchiveCategoriesAction({ selectedIds, activeItems, onClear, onOptimistic, onError }: { selectedIds: string[], activeItems: Item[], onClear: () => void, onOptimistic: (ids: string[]) => void, onError: (err: string | null) => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -299,9 +368,30 @@ function BulkRestoreCategoriesAction({ selectedIds, onClear, onOptimistic, onErr
 }
 
 type Variant = Record<string, unknown>;
+type ModifierGroup = Record<string, unknown>;
+type Modifier = Record<string, unknown>;
+type ItemModifierGroup = Record<string, unknown>;
 
-export function MenuManager({ categories, subcategories = [], items, variants = [], currency }: { categories: Category[], subcategories?: Subcategory[], items: Item[], variants?: Variant[], currency: string }) {
-  const [activeSection, setActiveSection] = useState<'DISHES' | 'CATEGORIES' | 'ARCHIVED'>('DISHES');
+export function MenuManager({ 
+  categories, 
+  subcategories = [], 
+  items, 
+  variants = [], 
+  modifierGroups = [],
+  modifiers = [],
+  itemModifierGroups = [],
+  currency 
+}: { 
+  categories: Category[], 
+  subcategories?: Subcategory[], 
+  items: Item[], 
+  variants?: Variant[], 
+  modifierGroups?: ModifierGroup[],
+  modifiers?: Modifier[],
+  itemModifierGroups?: ItemModifierGroup[],
+  currency: string 
+}) {
+  const [activeSection, setActiveSection] = useState<'DISHES' | 'CATEGORIES' | 'MODIFIERS' | 'ARCHIVED'>('DISHES');
   const [globalError, setGlobalError] = useState<string | null>(null);
 
   const [optimisticCategories, addOptimisticCategory] = useOptimistic(categories, (state, updatedCategory: Category) => 
@@ -322,21 +412,43 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
     return [...state, updatedVariant];
   });
   
+  const [optimisticModifierGroups, addOptimisticModifierGroup] = useOptimistic(modifierGroups, (state, updatedGroup: ModifierGroup) => {
+    const exists = state.find(g => g.id === updatedGroup.id);
+    if (exists) return state.map(g => g.id === updatedGroup.id ? updatedGroup : g);
+    return [...state, updatedGroup];
+  });
+
+  const [optimisticModifiers, addOptimisticModifier] = useOptimistic(modifiers, (state, updatedMod: Modifier) => {
+    const exists = state.find(m => m.id === updatedMod.id);
+    if (exists) return state.map(m => m.id === updatedMod.id ? updatedMod : m);
+    return [...state, updatedMod];
+  });
+
+  const [optimisticItemModifierGroups, addOptimisticItemModifierGroup] = useOptimistic(itemModifierGroups, (state, updatedAttach: ItemModifierGroup) => {
+    const exists = state.find(a => a.id === updatedAttach.id);
+    if (exists) return state.map(a => a.id === updatedAttach.id ? updatedAttach : a);
+    return [...state, updatedAttach];
+  });
+  
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isSubcategoryModalOpen, setIsSubcategoryModalOpen] = useState(false);
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
+  const [isModifierGroupModalOpen, setIsModifierGroupModalOpen] = useState(false);
   
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [editingSubcategory, setEditingSubcategory] = useState<Subcategory | null>(null);
   const [activeCategoryForSub, setActiveCategoryForSub] = useState<Category | null>(null);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
+  const [editingModifierGroup, setEditingModifierGroup] = useState<ModifierGroup | null>(null);
 
   const activeCategories = optimisticCategories.filter(c => c.status === 'ACTIVE');
   const activeSubcategories = optimisticSubcategories.filter(s => s.status === 'ACTIVE');
   const activeItems = optimisticItems.filter(i => i.status === 'ACTIVE');
+  const activeModifierGroups = optimisticModifierGroups.filter(g => g.status === 'ACTIVE');
   const archivedCategories = optimisticCategories.filter(c => c.status === 'ARCHIVED');
   const archivedSubcategories = optimisticSubcategories.filter(s => s.status === 'ARCHIVED');
   const archivedItems = optimisticItems.filter(i => i.status === 'ARCHIVED');
+  const archivedModifierGroups = optimisticModifierGroups.filter(g => g.status === 'ARCHIVED');
 
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   
@@ -420,6 +532,16 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
   const openEditItem = (i: Item) => {
     setEditingItem(i);
     setIsItemModalOpen(true);
+  };
+
+  const openAddModifierGroup = () => {
+    setEditingModifierGroup(null);
+    setIsModifierGroupModalOpen(true);
+  };
+
+  const openEditModifierGroup = (g: ModifierGroup) => {
+    setEditingModifierGroup(g);
+    setIsModifierGroupModalOpen(true);
   };
 
   const clearFilters = () => {
@@ -577,6 +699,12 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
           >
             Archived
           </button>
+          <button 
+            onClick={() => setActiveSection('MODIFIERS')}
+            className={`whitespace-nowrap flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-bold transition-colors ${activeSection === 'MODIFIERS' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Modifiers
+          </button>
           <button disabled className="whitespace-nowrap flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-bold text-muted-foreground opacity-50 cursor-not-allowed">
             Media <span className="ml-1 text-[9px] bg-muted-foreground/20 px-1 rounded-sm uppercase">Ph 7B</span>
           </button>
@@ -608,6 +736,12 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
               </Button>
             </>
           )}
+          {activeSection === 'MODIFIERS' && (
+            <Button onClick={openAddModifierGroup} className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm whitespace-nowrap font-bold">
+              <Plus className="w-4 h-4 mr-2" /> Add Group
+            </Button>
+          )}
+
         </div>
       </div>
 
@@ -751,9 +885,12 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:hidden gap-4">
-              {filteredItems.map(item => (
+              {filteredItems.map(item => {
+                const attachedGroupsCount = optimisticItemModifierGroups.filter(a => a.item_id === item.id && a.status === 'ACTIVE').length;
+                const activeVariantsCount = optimisticVariants.filter(v => v.item_id === item.id && v.status === 'ACTIVE').length;
+                return (
                 <div key={item.id as string} className="bg-card border border-border rounded-xl p-4 shadow-sm flex flex-col">
-                   <div className="flex items-start gap-4 mb-4">
+                   <div className="flex items-start gap-4 mb-3">
                      {(item.image_url as string) ? (
                        // Remote image domains are unpredictable for user uploads; using standard img tag
                        /* eslint-disable-next-line @next/next/no-img-element */
@@ -764,27 +901,43 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
                      <div className="flex-1">
                        <h4 className="font-bold text-foreground leading-tight line-clamp-2">{item.name as string}</h4>
                        <span className="text-sm font-bold text-foreground mt-1 block flex items-start">{getItemPriceDisplay(item)}</span>
-                       <div className="flex flex-wrap gap-2 mt-2">
-                         <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold uppercase tracking-wider text-muted-foreground border border-border/50">
-                            {getCategoryName(item.category_id)} {item.subcategory_id ? `> ${getSubcategoryName(item.subcategory_id)}` : ''}
-                         </span>
-                         {(item.dish_type as string) && (item.dish_type as string) !== 'GENERAL' && (
-                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider border border-primary/20">
-                              {formatDishType(item.dish_type as string)}
-                           </span>
-                         )}
-                         {Boolean(item.is_recommended) && (
-                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 text-[10px] font-bold uppercase tracking-wider border border-amber-500/20">
-                              Recommended
-                           </span>
-                         )}
-                         {Boolean(item.preparation_time_minutes) && (
-                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold text-muted-foreground border border-border/50">
-                              {item.preparation_time_minutes as number}m
-                           </span>
-                         )}
+                       <div className="text-[11px] font-medium text-muted-foreground mt-1">
+                          {getCategoryName(item.category_id)} {item.subcategory_id ? `> ${getSubcategoryName(item.subcategory_id)}` : ''}
                        </div>
                      </div>
+                   </div>
+                   
+                   <div className="flex flex-col gap-1 mb-4">
+                     <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                        {(item.dish_type as string) && (item.dish_type as string) !== 'GENERAL' && (
+                          <span className="inline-flex items-center text-primary bg-primary/10 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                            {formatDishType(item.dish_type as string)}
+                          </span>
+                        )}
+                        {Boolean(item.is_recommended) && (
+                          <span className="inline-flex items-center text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                            Rec
+                          </span>
+                        )}
+                        {Boolean(item.preparation_time_minutes) && (
+                          <span className="flex items-center gap-1">
+                            · {item.preparation_time_minutes as number}m
+                          </span>
+                        )}
+                        {(item.dietary_labels as string[])?.map((label: string, lIdx: number) => (
+                           <span key={lIdx} className="flex items-center gap-1 uppercase">
+                             · {label}
+                           </span>
+                        ))}
+                     </div>
+                     
+                     {(activeVariantsCount > 0 || attachedGroupsCount > 0) && (
+                       <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground font-medium bg-muted/50 px-2 py-1 rounded-md w-fit mt-1">
+                         {activeVariantsCount > 0 && <span>{activeVariantsCount} {activeVariantsCount === 1 ? 'variant' : 'variants'}</span>}
+                         {activeVariantsCount > 0 && attachedGroupsCount > 0 && <span>·</span>}
+                         {attachedGroupsCount > 0 && <span>{attachedGroupsCount} {attachedGroupsCount === 1 ? 'modifier group' : 'modifier groups'}</span>}
+                       </div>
+                     )}
                    </div>
                    <div className="flex items-center justify-between mt-auto pt-4 border-t border-border">
                      <ToggleAvailabilityButton item={item} />
@@ -796,7 +949,7 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
                      </div>
                    </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
 
@@ -813,55 +966,63 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
                  </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                 {filteredItems.map((item, idx) => (
+                 {filteredItems.map((item, idx) => {
+                   const attachedGroupsCount = optimisticItemModifierGroups.filter(a => a.item_id === item.id && a.status === 'ACTIVE').length;
+                   const activeVariantsCount = optimisticVariants.filter(v => v.item_id === item.id && v.status === 'ACTIVE').length;
+                   return (
                    <tr key={item.id as string} className="hover:bg-muted/30 transition-colors group">
                      <td className="px-5 py-4 text-muted-foreground font-medium">{idx + 1}</td>
-                     <td className="px-5 py-4">
-                       <div className="flex items-center gap-3">
+                     <td className="px-5 py-4 max-w-[300px]">
+                       <div className="flex items-start gap-3">
                          {(item.image_url as string) ? (
                            // Remote image domains are unpredictable for user uploads; using standard img tag
                            /* eslint-disable-next-line @next/next/no-img-element */
-                           <img src={item.image_url as string} alt={item.name as string} className="w-10 h-10 rounded-md object-cover border border-border shrink-0" />
+                           <img src={item.image_url as string} alt={item.name as string} className="w-10 h-10 rounded-md object-cover border border-border shrink-0 mt-0.5" />
                          ) : (
-                           <div className="w-10 h-10 rounded-md bg-muted/50 border border-border border-dashed flex items-center justify-center text-[9px] text-muted-foreground/50 shrink-0 font-medium">No img</div>
+                           <div className="w-10 h-10 rounded-md bg-muted/50 border border-border border-dashed flex items-center justify-center text-[9px] text-muted-foreground/50 shrink-0 font-medium mt-0.5">No img</div>
                          )}
-                         <div>
-                           <p className="font-medium text-foreground whitespace-normal line-clamp-1 max-w-sm">{item.name as string}</p>
-                           {(item.dietary_labels as string[]) && (item.dietary_labels as string[]).length > 0 && (
-                              <div className="flex gap-1 flex-wrap mt-1">
-                                {(item.dietary_labels as string[]).map((label: string, lIdx: number) => (
-                                  <span key={lIdx} className="inline-flex items-center text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-sm bg-primary/10 text-primary">
-                                    {label}
-                                  </span>
-                                ))}
-                              </div>
-                           )}
+                         <div className="flex flex-col">
+                           <p className="font-bold text-foreground whitespace-normal line-clamp-1">{item.name as string}</p>
+                           <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px] font-medium text-muted-foreground">
+                             {(item.dish_type as string) && (item.dish_type as string) !== 'GENERAL' && (
+                               <span className="inline-flex items-center text-primary bg-primary/10 px-1 py-0.5 rounded font-bold uppercase tracking-wider">
+                                 {formatDishType(item.dish_type as string)}
+                               </span>
+                             )}
+                             {Boolean(item.is_recommended) && (
+                               <span className="inline-flex items-center text-amber-600 bg-amber-500/10 px-1 py-0.5 rounded font-bold uppercase tracking-wider">
+                                 Rec
+                               </span>
+                             )}
+                             {Boolean(item.preparation_time_minutes) && (
+                               <span>· {item.preparation_time_minutes as number}m</span>
+                             )}
+                             {(item.dietary_labels as string[])?.map((label: string, lIdx: number) => (
+                               <span key={lIdx} className="uppercase">· {label}</span>
+                             ))}
+                             {attachedGroupsCount > 0 && (
+                               <span>· {attachedGroupsCount} {attachedGroupsCount === 1 ? 'modifier group' : 'modifier groups'}</span>
+                             )}
+                           </div>
                          </div>
                        </div>
                      </td>
-                     <td className="px-5 py-4 font-medium text-foreground">{getItemPriceDisplay(item)}</td>
-                     <td className="px-5 py-4 text-muted-foreground">
-                        <div className="flex flex-col gap-1 items-start">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold uppercase tracking-wider text-muted-foreground border border-border/50">
-                             {getCategoryName(item.category_id)} {item.subcategory_id ? `> ${getSubcategoryName(item.subcategory_id)}` : ''}
-                          </span>
-                          <div className="flex gap-1 flex-wrap">
-                            {(item.dish_type as string) && (item.dish_type as string) !== 'GENERAL' && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">
-                                 {formatDishType(item.dish_type as string)}
-                              </span>
-                            )}
-                            {Boolean(item.is_recommended) && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                                 Rec
-                              </span>
-                            )}
-                            {Boolean(item.preparation_time_minutes) && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-muted text-muted-foreground border border-border/50">
-                                 {item.preparation_time_minutes as number}m
-                              </span>
-                            )}
-                          </div>
+                     <td className="px-5 py-4">
+                       <div className="flex flex-col items-start gap-0.5">
+                         <span className="font-medium text-foreground">{getItemPriceDisplay(item)}</span>
+                         {activeVariantsCount > 0 && (
+                           <span className="text-[10px] font-medium text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                             {activeVariantsCount} {activeVariantsCount === 1 ? 'variant' : 'variants'}
+                           </span>
+                         )}
+                       </div>
+                     </td>
+                     <td className="px-5 py-4">
+                        <div className="flex flex-col items-start gap-0.5">
+                          <span className="text-sm font-medium text-foreground">{getCategoryName(item.category_id)}</span>
+                          {Boolean(item.subcategory_id) && (
+                            <span className="text-[11px] text-muted-foreground">{getSubcategoryName(item.subcategory_id)}</span>
+                          )}
                         </div>
                      </td>
                      <td className="px-5 py-4">
@@ -881,7 +1042,7 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
                         </div>
                      </td>
                    </tr>
-                 ))}
+                 )})}
               </tbody>
             </table>
           </div>
@@ -976,6 +1137,80 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
         </>
       )}
 
+      {activeSection === 'MODIFIERS' && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          <div className="bg-card border border-border rounded-xl p-4 sm:p-6 shadow-sm">
+            <h3 className="font-heading font-bold text-lg text-foreground mb-4 hidden sm:block">Modifier Groups</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {activeModifierGroups.map(group => {
+                const groupModifiers = optimisticModifiers.filter(m => m.group_id === group.id && m.status === 'ACTIVE');
+                const attachCount = activeItems.filter(i => optimisticItemModifierGroups.some(a => a.group_id === group.id && a.item_id === i.id && a.status === 'ACTIVE')).length;
+                return (
+                  <div key={group.id as string} className="bg-muted/30 border border-border rounded-lg p-4 flex flex-col justify-between group hover:border-primary/50 transition-colors">
+                    <div>
+                      <div className="flex items-start justify-between">
+                        <h4 className="font-bold text-foreground">{group.name as string}</h4>
+                        <span className="text-xs font-normal text-muted-foreground bg-background border border-border px-1.5 py-0.5 rounded-md shrink-0">{attachCount} items</span>
+                      </div>
+                      {(group.description as string) && (
+                        <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{group.description as string}</p>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">
+                          {group.selection_type as string}
+                        </span>
+                        {!!group.is_required ? (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-warning/10 text-warning border border-warning/20">
+                            Required
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-muted text-muted-foreground border border-border">
+                            Optional
+                          </span>
+                        )}
+                        {(group.min_selections as number) > 0 && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-muted text-muted-foreground border border-border">
+                            Min: {group.min_selections as number}
+                          </span>
+                        )}
+                        {(group.max_selections as number | null) !== null && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-muted text-muted-foreground border border-border">
+                            Max: {group.max_selections as number}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-4 pt-4 border-t border-border/50">
+                        <h5 className="text-xs font-bold text-foreground mb-2">Options ({groupModifiers.length})</h5>
+                        {groupModifiers.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {groupModifiers.map(mod => (
+                              <span key={mod.id as string} className="text-[10px] font-medium bg-background border border-border px-1.5 py-1 rounded">
+                                {mod.name as string} {(mod.price as number) > 0 && `(+${currency}${(mod.price as number).toFixed(2)})`}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground italic">No options defined.</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between mt-4 pt-4 border-t border-border/50">
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => openEditModifierGroup(group)}>Edit</Button>
+                      <ArchiveModifierGroupAction group={group} activeItemsCount={attachCount} onOptimistic={() => addOptimisticModifierGroup({ ...group, status: 'ARCHIVED' })} onError={setGlobalError} />
+                    </div>
+                  </div>
+                );
+              })}
+              {activeModifierGroups.length === 0 && (
+                <div className="col-span-full p-4 border border-dashed border-border rounded-lg text-center text-muted-foreground text-sm">
+                  No active modifier groups. Create one to get started.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeSection === 'ARCHIVED' && (
         <div className="space-y-8 animate-in fade-in duration-300">
           <div>
@@ -1058,6 +1293,33 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
               </div>
             )}
           </div>
+
+          <div>
+            <h3 className="font-heading font-bold text-lg text-foreground mb-4">Archived Modifier Groups</h3>
+            {archivedModifierGroups.length === 0 ? (
+              <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground text-sm">
+                 No archived modifier groups.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {archivedModifierGroups.map(group => (
+                  <div key={group.id as string} className="bg-muted/30 border border-border opacity-75 hover:opacity-100 rounded-lg p-4 flex flex-col justify-between transition-opacity">
+                     <div>
+                       <h4 className="font-bold text-muted-foreground flex items-center gap-2 line-through">
+                         {group.name as string}
+                       </h4>
+                       {(group.description as string) && (
+                         <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{group.description as string}</p>
+                       )}
+                     </div>
+                     <div className="flex items-center justify-end mt-4 pt-4 border-t border-border/50">
+                        <RestoreModifierGroupAction group={group} onOptimistic={() => addOptimisticModifierGroup({ ...group, status: 'ACTIVE' })} onError={setGlobalError} />
+                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1079,6 +1341,23 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
         />
       )}
 
+      {isModifierGroupModalOpen && (
+        <ModifierGroupModal 
+          isOpen={isModifierGroupModalOpen}
+          onClose={() => setIsModifierGroupModalOpen(false)}
+          group={editingModifierGroup ? {
+            ...editingModifierGroup,
+            selection_type: editingModifierGroup.selection_type as 'SINGLE' | 'MULTIPLE',
+            is_required: editingModifierGroup.is_required as boolean,
+            min_selections: editingModifierGroup.min_selections as number,
+            max_selections: editingModifierGroup.max_selections as number | null,
+            name: editingModifierGroup.name as string,
+            description: editingModifierGroup.description as string,
+            modifiers: optimisticModifiers.filter(m => m.group_id === editingModifierGroup.id) as any[]
+          } : null}
+        />
+      )}
+
       {isItemModalOpen && (
         <ItemModal 
           isOpen={isItemModalOpen} 
@@ -1087,6 +1366,8 @@ export function MenuManager({ categories, subcategories = [], items, variants = 
           categories={activeCategories}
           subcategories={activeSubcategories}
           variants={optimisticVariants.filter(v => v.item_id === editingItem?.id)}
+          modifierGroups={activeModifierGroups}
+          itemModifierGroups={optimisticItemModifierGroups.filter(a => a.item_id === editingItem?.id)}
           currency={currency}
           onOptimistic={addOptimisticItem}
           onError={setGlobalError}

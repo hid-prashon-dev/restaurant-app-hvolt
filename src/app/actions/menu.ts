@@ -770,6 +770,18 @@ export async function createMenuItem(prevState: any, formData: FormData) {
       }
     }
 
+    let modifierGroups: string[] = [];
+    try {
+      const raw = formData.get('modifier_groups')?.toString();
+      if (raw) modifierGroups = JSON.parse(raw);
+    } catch (e) {
+      return { success: false, error: 'Invalid modifier groups format.' };
+    }
+    
+    if (modifierGroups.length > 20) {
+      return { success: false, error: 'Maximum 20 modifier groups allowed per dish.' };
+    }
+
     const { data: newItem, error } = await adminSupabase.from('menu_items').insert({
       tenant_id,
       category_id,
@@ -802,6 +814,18 @@ export async function createMenuItem(prevState: any, formData: FormData) {
       if (varError) {
         console.error('Failed to insert variants:', varError);
       }
+    }
+
+    if (modifierGroups.length > 0) {
+      const groupAttachments = modifierGroups.map((groupId, index) => ({
+        tenant_id,
+        item_id: newItem.id,
+        group_id: groupId,
+        sort_order: index,
+        status: 'ACTIVE'
+      }));
+      const { error: attachError } = await adminSupabase.from('menu_item_modifier_groups').insert(groupAttachments);
+      if (attachError) console.error('Failed to attach modifier groups:', attachError);
     }
     
     revalidatePath('/dashboard/admin/menu');
@@ -922,6 +946,15 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       }
     }
 
+    let modifierGroups: string[] = [];
+    try {
+      const raw = formData.get('modifier_groups')?.toString();
+      if (raw) modifierGroups = JSON.parse(raw);
+    } catch (e) {
+      return { success: false, error: 'Invalid modifier groups format.' };
+    }
+    if (modifierGroups.length > 20) return { success: false, error: 'Maximum 20 modifier groups allowed per dish.' };
+
     const { error } = await adminSupabase
       .from('menu_items')
       .update({
@@ -986,6 +1019,50 @@ export async function updateMenuItem(prevState: any, formData: FormData) {
       }
     }
     
+    // Update Modifier Groups Attachment
+    const { data: existingAttachments } = await adminSupabase
+      .from('menu_item_modifier_groups')
+      .select('group_id, status')
+      .eq('item_id', id)
+      .eq('tenant_id', tenant_id);
+      
+    const existingActive = (existingAttachments || []).filter(a => a.status === 'ACTIVE').map(a => a.group_id);
+    
+    const toArchive = existingActive.filter(gId => !modifierGroups.includes(gId));
+    if (toArchive.length > 0) {
+      await adminSupabase.from('menu_item_modifier_groups')
+        .update({ status: 'ARCHIVED' })
+        .eq('item_id', id)
+        .eq('tenant_id', tenant_id)
+        .in('group_id', toArchive);
+    }
+    
+    if (modifierGroups.length > 0) {
+      const { data: existingRows } = await adminSupabase
+        .from('menu_item_modifier_groups')
+        .select('id, group_id')
+        .eq('item_id', id)
+        .eq('tenant_id', tenant_id)
+        .in('group_id', modifierGroups);
+        
+      const existingMap = new Map((existingRows || []).map(row => [row.group_id, row.id]));
+      
+      const attachmentsToUpsert = modifierGroups.map((gId, index) => ({
+        id: existingMap.get(gId),
+        tenant_id,
+        item_id: id,
+        group_id: gId,
+        sort_order: index,
+        status: 'ACTIVE'
+      }));
+      
+      const toUpdate = attachmentsToUpsert.filter(a => a.id);
+      const toInsert = attachmentsToUpsert.filter(a => !a.id).map(({ id, ...rest }) => rest);
+      
+      if (toUpdate.length > 0) await adminSupabase.from('menu_item_modifier_groups').upsert(toUpdate);
+      if (toInsert.length > 0) await adminSupabase.from('menu_item_modifier_groups').insert(toInsert);
+    }
+
     revalidatePath('/dashboard/admin/menu');
     return { success: true, error: null };
   } catch (err: any) {
@@ -1109,6 +1186,193 @@ export async function toggleMenuItemAvailability(prevState: any, formData: FormD
     return { success: true, error: null };
   } catch (err: any) {
     console.error('toggleMenuItemAvailability error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+// ------------------------------------------------------------------
+// Menu Modifier Groups
+// ------------------------------------------------------------------
+
+export async function upsertModifierGroup(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    
+    const id = formData.get('id')?.toString();
+    const name = formData.get('name')?.toString().trim();
+    const description = formData.get('description')?.toString().trim();
+    const selection_type = formData.get('selection_type')?.toString();
+    const is_required = formData.get('is_required') === 'true';
+    const min_selections = parseInt(formData.get('min_selections')?.toString() || '0', 10);
+    const max_selections_raw = formData.get('max_selections')?.toString();
+    const max_selections = max_selections_raw ? parseInt(max_selections_raw, 10) : null;
+    
+    if (!name) return { success: false, error: 'Group name is required.' };
+    if (name.length > 80) return { success: false, error: 'Group name is too long.' };
+    if (selection_type !== 'SINGLE' && selection_type !== 'MULTIPLE') return { success: false, error: 'Invalid selection type.' };
+    
+    if (selection_type === 'SINGLE') {
+      if (max_selections !== 1) return { success: false, error: 'Single selection must have max 1.' };
+      if (is_required && min_selections !== 1) return { success: false, error: 'Required single selection must have min 1.' };
+      if (!is_required && min_selections !== 0) return { success: false, error: 'Optional single selection must have min 0.' };
+    } else {
+      if (is_required && min_selections < 1) return { success: false, error: 'Required multiple selection must have min >= 1.' };
+      if (max_selections !== null && max_selections < min_selections) return { success: false, error: 'Max selections must be >= min selections.' };
+    }
+
+    const adminSupabase = createAdminClient();
+    
+    // Check duplicate name
+    const nameQuery = adminSupabase.from('menu_modifier_groups').select('id').eq('tenant_id', tenant_id).ilike('name', name).eq('status', 'ACTIVE');
+    if (id) nameQuery.neq('id', id);
+    const { data: existing } = await nameQuery.maybeSingle();
+    if (existing) return { success: false, error: 'An active modifier group with this name already exists.' };
+
+    let groupId = id;
+    if (id) {
+      const { error } = await adminSupabase.from('menu_modifier_groups').update({
+        name, description: description || null, selection_type, is_required, min_selections, max_selections
+      }).eq('id', id).eq('tenant_id', tenant_id);
+      if (error) throw error;
+    } else {
+      const { data, error } = await adminSupabase.from('menu_modifier_groups').insert({
+        tenant_id, name, description: description || null, selection_type, is_required, min_selections, max_selections
+      }).select('id').single();
+      if (error) throw error;
+      groupId = data.id;
+    }
+
+    const modifiersRaw = formData.get('modifiers')?.toString();
+    if (modifiersRaw) {
+      try {
+        const modifiers = JSON.parse(modifiersRaw);
+        if (!Array.isArray(modifiers)) throw new Error();
+        if (modifiers.length > 50) return { success: false, error: 'Maximum 50 modifiers per group.' };
+
+        const activeNames = new Set<string>();
+        for (const m of modifiers) {
+          if (m.status !== 'ARCHIVED') {
+            if (!m.name || m.name.trim().length === 0) return { success: false, error: 'Modifier name is required.' };
+            if (m.name.length > 80) return { success: false, error: 'Modifier name is too long.' };
+            if (typeof m.price !== 'number' || m.price < 0 || m.price > 999999.99) return { success: false, error: 'Invalid modifier price.' };
+            const lowerName = m.name.toLowerCase().trim();
+            if (activeNames.has(lowerName)) return { success: false, error: 'Duplicate modifier names not allowed.' };
+            activeNames.add(lowerName);
+          }
+        }
+
+        const modsToUpdate = modifiers.filter(m => m.id && !m.id.startsWith('temp_')).map((m, index) => ({
+          id: m.id, tenant_id, group_id: groupId, name: m.name.trim(), price: m.price, sort_order: index, status: m.status || 'ACTIVE'
+        }));
+        
+        const modsToInsert = modifiers.filter(m => !m.id || m.id.startsWith('temp_')).map((m, index) => ({
+          tenant_id, group_id: groupId, name: m.name.trim(), price: m.price, sort_order: index, status: m.status || 'ACTIVE'
+        }));
+
+        if (modsToUpdate.length > 0) await adminSupabase.from('menu_modifiers').upsert(modsToUpdate);
+        if (modsToInsert.length > 0) await adminSupabase.from('menu_modifiers').insert(modsToInsert);
+      } catch (e) {
+        return { success: false, error: 'Invalid modifiers format.' };
+      }
+    }
+
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('upsertModifierGroup error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function archiveModifierGroup(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    const id = formData.get('id')?.toString();
+    if (!id) return { success: false, error: 'Group ID is required.' };
+
+    const adminSupabase = createAdminClient();
+    const { error } = await adminSupabase.from('menu_modifier_groups').update({ status: 'ARCHIVED' }).eq('id', id).eq('tenant_id', tenant_id);
+    if (error) throw error;
+    
+    // We should also archive active attachments for this group, but it's optional as UI filters them. Let's do it for cleanliness.
+    await adminSupabase.from('menu_item_modifier_groups').update({ status: 'ARCHIVED' }).eq('group_id', id).eq('tenant_id', tenant_id);
+
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('archiveModifierGroup error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function restoreModifierGroup(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    const id = formData.get('id')?.toString();
+    if (!id) return { success: false, error: 'Group ID is required.' };
+
+    const adminSupabase = createAdminClient();
+    
+    // Check for duplicate active group name
+    const { data: group } = await adminSupabase.from('menu_modifier_groups').select('name, status').eq('id', id).eq('tenant_id', tenant_id).single();
+    if (!group) return { success: false, error: 'Group not found.' };
+    if (group.status === 'ACTIVE') return { success: false, error: 'Already active.' };
+    
+    const { data: conflict } = await adminSupabase.from('menu_modifier_groups').select('id').eq('tenant_id', tenant_id).ilike('name', group.name).eq('status', 'ACTIVE').maybeSingle();
+    if (conflict) return { success: false, error: 'An active group with this name already exists.' };
+
+    const { error } = await adminSupabase.from('menu_modifier_groups').update({ status: 'ACTIVE' }).eq('id', id).eq('tenant_id', tenant_id);
+    if (error) throw error;
+
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('restoreModifierGroup error:', err);
+    return { success: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+export async function createTemplateModifierGroups(prevState: any, formData: FormData) {
+  try {
+    const tenant_id = await verifyAdminAndGetTenant();
+    const templatesRaw = formData.get('templates')?.toString();
+    if (!templatesRaw) return { success: false, error: 'No templates provided.' };
+    
+    let templates: { name: string; selection_type: string; min: number; max: number | null; required: boolean; modifiers: { name: string; price: number }[] }[] = [];
+    try {
+      templates = JSON.parse(templatesRaw);
+    } catch {
+      return { success: false, error: 'Invalid templates data.' };
+    }
+    
+    if (templates.length === 0) return { success: true, error: null };
+
+    const adminSupabase = createAdminClient();
+    const { data: existingGroups } = await adminSupabase.from('menu_modifier_groups').select('name').eq('tenant_id', tenant_id).eq('status', 'ACTIVE');
+    const existingNames = new Set((existingGroups || []).map(g => g.name.toLowerCase()));
+
+    for (let i = 0; i < templates.length; i++) {
+      const t = templates[i];
+      if (existingNames.has(t.name.toLowerCase())) continue; // Skip if already exists
+      
+      const { data, error } = await adminSupabase.from('menu_modifier_groups').insert({
+        tenant_id, name: t.name, selection_type: t.selection_type, is_required: t.required, min_selections: t.min, max_selections: t.max, sort_order: i * 10
+      }).select('id').single();
+      
+      if (error || !data) continue;
+      
+      if (t.modifiers && t.modifiers.length > 0) {
+        const mods = t.modifiers.map((m, mIdx) => ({
+          tenant_id, group_id: data.id, name: m.name, price: m.price, sort_order: mIdx * 10
+        }));
+        await adminSupabase.from('menu_modifiers').insert(mods);
+      }
+    }
+
+    revalidatePath('/dashboard/admin/menu');
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('createTemplateModifierGroups error:', err);
     return { success: false, error: 'Something went wrong. Please try again.' };
   }
 }

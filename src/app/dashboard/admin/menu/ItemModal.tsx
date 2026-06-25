@@ -23,6 +23,8 @@ export function ItemModal({
   categories, 
   subcategories = [], 
   variants = [],
+  modifierGroups = [],
+  itemModifierGroups = [],
   currency,
   onOptimistic,
   onError
@@ -33,6 +35,8 @@ export function ItemModal({
   categories: Record<string, unknown>[], 
   subcategories?: Record<string, unknown>[], 
   variants?: Record<string, unknown>[],
+  modifierGroups?: Record<string, unknown>[],
+  itemModifierGroups?: Record<string, unknown>[],
   currency: string,
   onOptimistic?: (dish: Record<string, unknown>) => void,
   onError?: (err: string) => void
@@ -54,6 +58,10 @@ export function ItemModal({
   const [previewVariants, setPreviewVariants] = useState<VariantDraft[]>(initialVariants);
   const [showVariants, setShowVariants] = useState(initialVariants.some((v) => v.status === 'ACTIVE'));
   const [showArchivedVariants, setShowArchivedVariants] = useState(false);
+
+  const [selectedModifierGroupIds, setSelectedModifierGroupIds] = useState<string[]>(
+    (itemModifierGroups || []).filter(a => a.status === 'ACTIVE').map(a => a.group_id as string)
+  );
 
   const [isPending, startTransition] = useTransition();
   const [localError, setLocalError] = useState<string | null>(null);
@@ -94,6 +102,7 @@ export function ItemModal({
     if (formData.get('is_spicy')) newItem.labels.push('SPICY');
 
     formData.append('variants', JSON.stringify(previewVariants));
+    formData.append('modifier_groups', JSON.stringify(selectedModifierGroupIds));
 
     onClose();
 
@@ -393,6 +402,63 @@ export function ItemModal({
                       </div>
                     )}
                   </div>
+                )}
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Modifiers</h3>
+                    <p className="text-xs text-muted-foreground">Attach optional or required additions.</p>
+                  </div>
+                </div>
+                
+                {modifierGroups && modifierGroups.filter(g => g.status === 'ACTIVE').length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {modifierGroups.filter(g => g.status === 'ACTIVE').map((group) => {
+                      const isSelected = selectedModifierGroupIds.includes(group.id as string);
+                      return (
+                        <label 
+                          key={group.id as string} 
+                          className={`flex items-start gap-3 p-3 rounded-xl border transition-colors cursor-pointer ${
+                            isSelected 
+                              ? 'bg-primary/5 border-primary/30' 
+                              : 'bg-background border-border hover:border-primary/50'
+                          }`}
+                        >
+                          <input 
+                            type="checkbox" 
+                            className="mt-0.5 rounded border-input text-primary focus:ring-primary h-4 w-4"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedModifierGroupIds(prev => [...prev, group.id as string]);
+                              } else {
+                                setSelectedModifierGroupIds(prev => prev.filter(id => id !== group.id));
+                              }
+                            }}
+                          />
+                          <div className="space-y-1">
+                            <span className="text-sm font-bold text-foreground block leading-none">{group.name as string}</span>
+                            <div className="flex gap-1.5 flex-wrap">
+                              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                                {group.selection_type as string}
+                              </span>
+                              {!!group.is_required && (
+                                <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                                  REQUIRED
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic bg-muted/20 p-3 rounded-lg border border-border">
+                    No active modifier groups exist. Create them from the Modifiers tab.
+                  </p>
                 )}
               </div>
 
