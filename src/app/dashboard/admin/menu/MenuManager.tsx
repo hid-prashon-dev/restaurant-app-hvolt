@@ -714,10 +714,7 @@ export function MenuManager({
             Modifiers
           </button>
           <button disabled className="whitespace-nowrap flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-bold text-muted-foreground opacity-50 cursor-not-allowed">
-            Media <span className="ml-1 text-[9px] bg-muted-foreground/20 px-1 rounded-sm uppercase">Ph 7B</span>
-          </button>
-          <button disabled className="whitespace-nowrap flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-bold text-muted-foreground opacity-50 cursor-not-allowed">
-            Variants <span className="ml-1 text-[9px] bg-muted-foreground/20 px-1 rounded-sm uppercase">Ph 7B</span>
+            Media <span className="ml-1 text-[9px] bg-muted-foreground/20 px-1 rounded-sm uppercase font-bold text-muted-foreground">Soon</span>
           </button>
         </div>
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0 w-full sm:w-auto">

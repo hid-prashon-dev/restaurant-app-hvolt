@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useState, useTransition, useRef } from 'react';
 import { createMenuItem, updateMenuItem } from '@/app/actions/menu';
+import { uploadMenuMedia } from '@/app/actions/media';
 import { Button } from '@/components/ui/button';
-import { X, ChevronDown, ChevronUp, Image as ImageIcon, Upload, Library } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, Image as ImageIcon, Upload, Trash2, Library } from 'lucide-react';
 import { useModalUX } from '@/hooks/useModalUX';
 
 export type VariantDraft = {
@@ -44,6 +45,13 @@ export function ItemModal({
   const isEditing = !!item;
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [previewImage, setPreviewImage] = useState<string>((item?.image_url as string) || '');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  
+  const activeUploadPromise = useRef<Promise<string | null> | null>(null);
+  const currentUploadId = useRef<number>(0);
   const [previewName, setPreviewName] = useState<string>((item?.name as string) || '');
   const [previewPrice, setPreviewPrice] = useState<string>((item?.price as number)?.toString() || '');
   const [previewCategory, setPreviewCategory] = useState<string>((item?.category_id as string) || categories[0]?.id as string || '');
@@ -68,6 +76,71 @@ export function ItemModal({
 
   useModalUX(isOpen, onClose);
 
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const handleRemoveImage = () => {
+    if (previewImage && previewImage.startsWith('blob:')) {
+      URL.revokeObjectURL(previewImage);
+    }
+    setImageFile(null);
+    setPreviewImage('');
+    setUploadStatus('idle');
+    setUploadedUrl(null);
+    setUploadError(null);
+    currentUploadId.current++; // invalidate pending uploads
+    activeUploadPromise.current = null;
+  };
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 3145728) {
+      setLocalError('Image must be under 3MB.');
+      e.target.value = '';
+      return;
+    }
+    
+    if (previewImage && previewImage.startsWith('blob:')) {
+      URL.revokeObjectURL(previewImage);
+    }
+
+    setImageFile(file);
+    setPreviewImage(URL.createObjectURL(file));
+    setUploadStatus('uploading');
+    setUploadError(null);
+    setLocalError(null);
+    setUploadedUrl(null);
+
+    const uploadId = ++currentUploadId.current;
+    
+    const uploadTask = (async () => {
+      const mediaFd = new FormData();
+      mediaFd.append('image_file', file);
+      try {
+        const res = await uploadMenuMedia(mediaFd);
+        if (currentUploadId.current !== uploadId) return null; // superseded
+        
+        if (!res.success) {
+          setUploadStatus('error');
+          setUploadError(res.error || 'Image upload failed. Please try again.');
+          return null;
+        }
+        
+        setUploadStatus('uploaded');
+        setUploadedUrl(res.public_url as string);
+        return res.public_url as string;
+      } catch (err) {
+        if (currentUploadId.current !== uploadId) return null;
+        setUploadStatus('error');
+        setUploadError('Network error or file too large. Please check your connection and ensure file is under 3MB.');
+        return null;
+      }
+    })();
+
+    activeUploadPromise.current = uploadTask;
+  };
+
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLocalError(null);
@@ -79,34 +152,58 @@ export function ItemModal({
       return;
     }
 
-    const newItem = {
-      ...item,
-      id: isEditing ? item?.id : `temp-${Date.now()}`,
-      name: formData.get('name'),
-      price: Number(formData.get('price')),
-      category_id: formData.get('category_id'),
-      subcategory_id: formData.get('subcategory_id') || null,
-      dish_type: formData.get('dish_type') || null,
-      is_recommended: formData.get('is_recommended') === 'on',
-      is_available: formData.get('is_available') === 'true',
-      preparation_time_minutes: formData.get('preparation_time_minutes') ? Number(formData.get('preparation_time_minutes')) : null,
-      description: formData.get('description') || null,
-      image_url: formData.get('image_url') || null,
-      status: 'ACTIVE',
-      labels: [] as string[],
-    };
-    
-    if (formData.get('is_veg')) newItem.labels.push('VEG');
-    if (formData.get('is_vegan')) newItem.labels.push('VEGAN');
-    if (formData.get('is_gluten_free')) newItem.labels.push('GLUTEN_FREE');
-    if (formData.get('is_spicy')) newItem.labels.push('SPICY');
-
-    formData.append('variants', JSON.stringify(previewVariants));
-    formData.append('modifier_groups', JSON.stringify(selectedModifierGroupIds));
-
-    onClose();
-
     startTransition(async () => {
+      let finalImageUrl = previewImage && !previewImage.startsWith('blob:') ? previewImage : (item?.image_url as string || null);
+
+      if (imageFile) {
+        if (uploadStatus === 'error') {
+          setLocalError(uploadError || 'Image upload failed. Please try again or remove the image.');
+          return;
+        }
+
+        if (uploadStatus === 'uploading' && activeUploadPromise.current) {
+          setUploadStatus('uploading'); // visual feedback if they hit save too fast
+          const url = await activeUploadPromise.current;
+          if (!url) {
+            setLocalError(uploadError || 'Image upload failed. Please try again or remove the image.');
+            return;
+          }
+          finalImageUrl = url;
+        } else if (uploadStatus === 'uploaded' && uploadedUrl) {
+          finalImageUrl = uploadedUrl;
+        }
+      } else if (!previewImage) {
+        finalImageUrl = null;
+      }
+
+      const newItem = {
+        ...item,
+        id: isEditing ? item?.id : `temp-${Date.now()}`,
+        name: formData.get('name'),
+        price: Number(formData.get('price')),
+        category_id: formData.get('category_id'),
+        subcategory_id: formData.get('subcategory_id') || null,
+        dish_type: formData.get('dish_type') || null,
+        is_recommended: formData.get('is_recommended') === 'on',
+        is_available: formData.get('is_available') === 'true',
+        preparation_time_minutes: formData.get('preparation_time_minutes') ? Number(formData.get('preparation_time_minutes')) : null,
+        description: formData.get('description') || null,
+        image_url: finalImageUrl || null,
+        status: 'ACTIVE',
+        labels: [] as string[],
+      };
+      
+      if (formData.get('is_veg')) newItem.labels.push('VEG');
+      if (formData.get('is_vegan')) newItem.labels.push('VEGAN');
+      if (formData.get('is_gluten_free')) newItem.labels.push('GLUTEN_FREE');
+      if (formData.get('is_spicy')) newItem.labels.push('SPICY');
+
+      formData.append('variants', JSON.stringify(previewVariants));
+      formData.append('modifier_groups', JSON.stringify(selectedModifierGroupIds));
+      formData.set('image_url', finalImageUrl || '');
+
+      onClose();
+
       if (onOptimistic) onOptimistic(newItem);
       const action = isEditing ? updateMenuItem : createMenuItem;
       const res = await action(null, formData);
@@ -116,8 +213,6 @@ export function ItemModal({
     });
   };
 
-  if (!isOpen) return null;
-
   const categoryName = categories.find(c => c.id === previewCategory)?.name as string || 'Uncategorized';
   const availableSubcategories = subcategories.filter(s => s.category_id === previewCategory && s.status === 'ACTIVE');
   const subcategoryName = availableSubcategories.find(s => s.id === previewSubcategory)?.name as string || '';
@@ -125,9 +220,12 @@ export function ItemModal({
   // Reset subcategory if it doesn't belong to newly selected category
   useEffect(() => {
     if (previewSubcategory && !availableSubcategories.find(s => s.id === previewSubcategory)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPreviewSubcategory('');
     }
   }, [previewCategory, availableSubcategories, previewSubcategory]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
@@ -148,7 +246,7 @@ export function ItemModal({
           </div>
 
           <div className="overflow-y-auto p-6 flex-1 custom-scrollbar">
-            <form onSubmit={handleSubmit} className="space-y-8" id="item-form">
+            <form ref={formRef} onSubmit={handleSubmit} className="space-y-8" id="item-form">
               {localError && (
                 <div className="text-sm text-destructive font-medium bg-destructive/10 border border-destructive/20 p-3 rounded-md">
                   {localError as string}
@@ -167,6 +265,64 @@ export function ItemModal({
                    <h4 className="text-sm font-bold text-foreground">Modifiers are coming in Phase 7B.</h4>
                    <p className="text-xs text-muted-foreground mt-1">You will soon be able to add add-ons like Extra Cheese or side options. For now, you can add variants (sizes, etc.) below.</p>
                  </div>
+              </div>
+
+              {/* Image Upload Section */}
+              <div className="space-y-4">
+                <label className="text-sm font-medium text-foreground">Dish Image</label>
+                <div className="flex flex-col sm:flex-row items-start gap-4">
+                  <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl border border-border bg-muted/30 overflow-hidden flex-shrink-0 relative group">
+                    {previewImage ? (
+                      <img src={previewImage} alt="Dish preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                        <ImageIcon className="w-8 h-8 mb-2 opacity-50" />
+                        <span className="text-[10px] uppercase font-bold opacity-50">No Image</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-3">
+                    <p className="text-xs text-muted-foreground max-w-sm">
+                      Upload a high-quality image of the dish. Supported formats: JPG, PNG, WebP. Max size: 3MB.
+                    </p>
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <div className="relative">
+                        <input 
+                          type="file" 
+                          accept="image/jpeg, image/png, image/webp" 
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
+                          onChange={handleImageSelect}
+                        />
+                        <Button type="button" variant="outline" size="sm" className="pointer-events-none flex items-center gap-2 h-9">
+                          <Upload className="w-4 h-4" />
+                          {previewImage ? 'Replace Image' : 'Upload Image'}
+                        </Button>
+                      </div>
+                      {previewImage && (
+                        <Button 
+                          type="button" 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-9 text-destructive hover:text-destructive hover:bg-destructive/10 flex items-center gap-2"
+                          onClick={handleRemoveImage}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Remove
+                        </Button>
+                      )}
+                      
+                      {uploadStatus === 'uploading' && (
+                        <span className="text-xs text-muted-foreground animate-pulse ml-2">Finishing image upload...</span>
+                      )}
+                      {uploadStatus === 'error' && (
+                        <span className="text-xs text-destructive ml-2 font-medium">Upload failed</span>
+                      )}
+                      {uploadStatus === 'uploaded' && (
+                        <span className="text-xs text-green-600 dark:text-green-400 ml-2 font-medium">Image ready</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -477,38 +633,7 @@ export function ItemModal({
                 />
               </div>
 
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-foreground">Dish Photo</label>
-                <div className="border border-border rounded-xl p-5 bg-muted/20 border-dashed relative">
-                   <div className="flex flex-col sm:flex-row gap-6 items-center">
-                     {previewImage ? (
-                       <div className="relative aspect-video sm:aspect-square sm:w-32 sm:h-32 w-full rounded-lg overflow-hidden border border-border shadow-sm shrink-0 bg-background group">
-                         <img src={previewImage} alt="Preview" className="w-full h-full object-cover" />
-                       </div>
-                     ) : (
-                       <div className="relative aspect-video sm:aspect-square sm:w-32 sm:h-32 w-full rounded-lg border border-border border-dashed bg-muted flex flex-col items-center justify-center shrink-0 text-muted-foreground/50">
-                         <ImageIcon className="w-8 h-8 mb-2 opacity-50" />
-                         <span className="text-[10px] font-medium uppercase tracking-wider">No Image</span>
-                       </div>
-                     )}
-                     
-                     <div className="flex-1 space-y-4 w-full">
-                       <div>
-                         <h4 className="text-sm font-medium text-foreground">Media Upload</h4>
-                         <p className="text-xs text-muted-foreground mt-1">Upload high-quality images to increase orders. PNG or JPG, max 5MB.</p>
-                       </div>
-                       <div className="flex flex-wrap gap-2">
-                         <Button type="button" variant="outline" disabled className="h-9 text-xs opacity-70">
-                           <Upload className="w-3.5 h-3.5 mr-2" /> Upload coming next
-                         </Button>
-                         <Button type="button" variant="outline" disabled className="h-9 text-xs opacity-70">
-                           <Library className="w-3.5 h-3.5 mr-2" /> Media Library coming next
-                         </Button>
-                       </div>
-                     </div>
-                   </div>
-                </div>
-              </div>
+
 
               <div className="space-y-3">
                 <label className="text-sm font-medium text-foreground">Dietary Labels (Optional)</label>
@@ -558,18 +683,6 @@ export function ItemModal({
                 {showAdvanced && (
                   <div className="mt-6 space-y-6 animate-in fade-in slide-in-from-top-2 duration-200 bg-muted/20 p-5 rounded-xl border border-border">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground">Advanced Image URL</label>
-                      <input 
-                        type="url" 
-                        name="image_url" 
-                        value={previewImage}
-                        onChange={e => setPreviewImage(e.target.value)}
-                        placeholder="https://example.com/image.jpg"
-                        className="w-full flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50" 
-                      />
-                      <p className="text-xs text-muted-foreground">Directly set an image link. Temporary feature until media upload is ready.</p>
-                    </div>
-                    <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">Display Order</label>
                       <input 
                         type="number" 
@@ -591,7 +704,7 @@ export function ItemModal({
               Cancel
             </Button>
             <Button type="submit" form="item-form" disabled={isPending} className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground font-bold active:scale-[0.98] transition-transform">
-              Save Dish
+              {isEditing ? 'Save Changes' : 'Create Dish'}
             </Button>
           </div>
         </div>
